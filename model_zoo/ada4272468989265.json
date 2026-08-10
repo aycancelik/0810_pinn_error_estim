@@ -1,0 +1,28 @@
+{
+  "model_hash": "ada4272468989265",
+  "config": {
+    "layers": [
+      2,
+      20,
+      20,
+      20,
+      1
+    ],
+    "activation": "tanh",
+    "n_iterations": 10000,
+    "num_domain": 10000,
+    "num_test": 1000,
+    "seed": 42
+  },
+  "problem": {
+    "class": "Poisson2D",
+    "spatial_bounds": [
+      0.0,
+      1.0,
+      0.0,
+      1.0
+    ],
+    "temporal_bounds": null
+  },
+  "training_time": 127.71998500823975
+}

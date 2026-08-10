@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Building Trust in PINNs · Interactive Demo</title>
+  <script src="https://cdn.plot.ly/plotly-3.5.1.min.js" charset="utf-8"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,600;1,300&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --orange:      #ff7f00;
+      --pink:        #f781bf;
+      --blue:        #377eb8;
+      --green:       #4daf4a;
+      --surface:     rgba(255,255,255,0.72);
+      --surface2:    rgba(255,255,255,0.55);
+      --border:      rgba(55,126,184,0.18);
+      --text:        #1a1f2e;
+      --text-muted:  #6b7a99;
+      --text-dim:    #4a5470;
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+      --radius: 10px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      background:
+        radial-gradient(ellipse at 0% 0%,   rgba(255,127,0,0.22)  0%, transparent 55%),
+        radial-gradient(ellipse at 100% 0%,  rgba(247,129,191,0.20) 0%, transparent 55%),
+        radial-gradient(ellipse at 50% 100%, rgba(55,126,184,0.25)  0%, transparent 60%),
+        #f0f4ff;
+      background-attachment: fixed;
+      color: var(--text);
+      font-family: var(--sans);
+      font-weight: 300;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: radial-gradient(circle, rgba(55,126,184,0.12) 1px, transparent 1px);
+      background-size: 28px 28px;
+      pointer-events: none; z-index: 0;
+    }
+
+    .wrapper {
+      position: relative; z-index: 1;
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    header {
+      padding: 52px 0 36px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 40px;
+    }
+    h1 {
+      font-size: clamp(1.4rem, 3.5vw, 2.4rem);
+      font-weight: 600; letter-spacing: -0.02em; line-height: 1.25;
+      margin-bottom: 14px;
+    }
+    h1 .w-green { color: #2e7d32; }
+    .subtitle { color: var(--text-dim); font-size: 0.97rem; max-width: 680px; }
+
+    /* ── Section titles ───────────────────────────────────────── */
+    .section-title {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--blue);
+      font-weight: 600;
+      margin: 36px 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── Glass card ───────────────────────────────────────────── */
+    .glass {
+      background: var(--surface);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    /* ── Controls ─────────────────────────────────────────────── */
+    .controls {
+      padding: 24px;
+      margin-bottom: 28px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+      box-shadow: 0 4px 24px rgba(55,126,184,0.10);
+    }
+    .control-group { display: flex; flex-direction: column; gap: 8px; }
+
+    label {
+      font-family: var(--mono); font-size: 11px;
+      letter-spacing: 0.13em; text-transform: uppercase;
+      color: var(--blue); font-weight: 600;
+    }
+
+    select {
+      background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px 14px; font-family: var(--mono); font-size: 13px;
+      cursor: pointer; appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7a99' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 14px center;
+      padding-right: 36px; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(55,126,184,0.15); }
+    select:hover { border-color: var(--orange); }
+
+    .control-desc { font-size: 12px; color: var(--text-muted); font-style: italic; }
+
+    .model-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      font-family: var(--mono); font-size: 11px; font-weight: 600;
+      letter-spacing: 0.06em; margin-top: 4px; width: fit-content;
+      transition: background 0.3s, color 0.3s;
+    }
+    .model-badge.trained { background: rgba(46,125,50,0.12); color: #2e7d32; border: 1px solid rgba(46,125,50,0.25); }
+    .model-badge.random  { background: rgba(255,127,0,0.12);  color: #b85a00; border: 1px solid rgba(255,127,0,0.25); }
+    .model-badge::before { content:''; width:7px; height:7px; border-radius:50%; background:currentColor; }
+
+    /* ── Stats bar ────────────────────────────────────────────── */
+    .stats-bar { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 28px; }
+    .stat-chip { padding: 14px 20px; flex: 1; min-width: 130px; box-shadow: 0 2px 12px rgba(55,126,184,0.08); }
+    .stat-chip:nth-child(1) { border-top: 3px solid var(--orange); }
+    .stat-chip:nth-child(2) { border-top: 3px solid var(--pink);   }
+    .stat-chip:nth-child(3) { border-top: 3px solid var(--blue);   }
+    .stat-chip:nth-child(4) { border-top: 3px solid var(--green);  }
+    .stat-chip:nth-child(5) { border-top: 3px solid var(--orange); }
+    .stat-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px; }
+    .stat-value { font-family: var(--mono); font-size: 1.1rem; font-weight: 600; color: var(--text); }
+
+    /* ── Heatmap grid ─────────────────────────────────────────── */
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 860px) { .heatmap-grid { grid-template-columns: 1fr; } }
+
+    .plot-card { overflow: hidden; box-shadow: 0 2px 16px rgba(55,126,184,0.08); transition: box-shadow 0.2s, border-color 0.2s; }
+    .plot-card:hover { box-shadow: 0 6px 32px rgba(55,126,184,0.16); border-color: rgba(55,126,184,0.35); }
+
+    .plot-card-header {
+      padding: 11px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+      background: rgba(255,255,255,0.5);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .plot-card-title {
+      font-family: var(--mono); font-size: 11px;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-dim); font-weight: 600;
+    }
+    .plot-container { height: 300px; }
+
+    /* ── Line plot section ────────────────────────────────────── */
+    .line-card { overflow: hidden; box-shadow: 0 2px 16px rgba(55,126,184,0.08); }
+    .line-card .plot-card-header { border-left: 4px solid var(--blue); }
+
+    #plot-line { height: 360px; }
+
+    /* ── Slider ───────────────────────────────────────────────── */
+    .slider-wrap {
+      padding: 18px 24px 20px;
+      display: flex; align-items: center; gap: 16px;
+      border-top: 1px solid var(--border);
+      background: rgba(255,255,255,0.4);
+      flex-wrap: wrap;
+    }
+    .slider-label {
+      font-family: var(--mono); font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.12em;
+      color: var(--blue); font-weight: 600; white-space: nowrap;
+    }
+    #slice-slider {
+      flex: 1; min-width: 160px;
+      -webkit-appearance: none; appearance: none;
+      height: 4px; border-radius: 2px;
+      background: linear-gradient(to right, var(--blue) var(--pct,50%), rgba(55,126,184,0.2) var(--pct,50%));
+      outline: none; cursor: pointer;
+    }
+    #slice-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      border-radius: 50%; background: var(--blue);
+      border: 2px solid white; box-shadow: 0 1px 4px rgba(55,126,184,0.4);
+      cursor: pointer;
+    }
+    #slice-slider::-moz-range-thumb {
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--blue); border: 2px solid white;
+      box-shadow: 0 1px 4px rgba(55,126,184,0.4); cursor: pointer;
+    }
+    #slice-value {
+      font-family: var(--mono); font-size: 13px; font-weight: 600;
+      color: var(--text); background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 4px 12px; min-width: 70px; text-align: center;
+    }
+
+    /* ── Loading / error ──────────────────────────────────────── */
+    .state-box {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 300px;
+      color: var(--text-muted); gap: 12px;
+      font-family: var(--mono); font-size: 13px; text-align: center; padding: 20px;
+    }
+    .spinner {
+      width: 28px; height: 28px;
+      border: 2px solid var(--border); border-top-color: var(--blue);
+      border-radius: 50%; animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error-icon { font-size: 28px; }
+
+    /* ── Footer ───────────────────────────────────────────────── */
+    footer {
+      margin-top: 56px; padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-family: var(--mono); font-size: 11px; color: var(--text-muted);
+      display: flex; gap: 24px; flex-wrap: wrap;
+    }
+
+    /* ── Animations ───────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .controls    { animation: fadeUp 0.4s ease both; }
+    .stats-bar   { animation: fadeUp 0.4s ease 0.06s both; }
+    .heatmap-grid{ animation: fadeUp 0.4s ease 0.12s both; }
+    .line-card   { animation: fadeUp 0.4s ease 0.18s both; }
+  </style>
+</head>
+
+<body>
+<div class="wrapper">
+
+  <!-- Header -->
+  <header>
+    <h1><span class="w-green">Building Trust in PINNs</span>: Error Estimation through Finite Difference Methods</h1>
+    <p class="subtitle">
+      Select a benchmark problem and model type to explore PINN solutions, error estimates, and interactive slice plots.
+    </p>
+  </header>
+
+  <!-- Controls -->
+  <div class="controls glass">
+    <div class="control-group">
+      <label for="sel-problem">Benchmark Problem</label>
+      <select id="sel-problem">
+        <option value="heat">1-D Heat Equation</option>
+        <option value="wave">1-D Wave Equation</option>
+        <option value="drift_diffusion">1-D Drift-Diffusion</option>
+        <option value="poisson_2d">2-D Poisson Equation</option>
+      </select>
+      <span id="prob-desc" class="control-desc"></span>
+    </div>
+
+    <div class="control-group">
+      <label for="sel-model">Model Type</label>
+      <select id="sel-model">
+        <option value="well_trained_model">Well-Trained Model</option>
+        <option value="randomly_initialized_model">Randomly Initialised Model</option>
+      </select>
+      <div id="model-badge" class="model-badge trained">Well-Trained · 10k iters · 10k pts</div>
+    </div>
+
+    <div class="control-group">
+      <label>FDM Grid Size</label>
+      <div style="padding:10px 14px;font-family:var(--mono);font-size:13px;
+                  background:var(--surface2);border:1px solid var(--border);
+                  border-radius:6px;color:var(--text-muted);">32 × 32</div>
+      <span class="control-desc">Fixed for this demo build</span>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-chip glass"><div class="stat-label">Max True Error</div><div class="stat-value" id="stat-max">—</div></div>
+    <div class="stat-chip glass"><div class="stat-label">Mean True Error</div><div class="stat-value" id="stat-mean">—</div></div>
+    <div class="stat-chip glass"><div class="stat-label">L² Relative Error</div><div class="stat-value" id="stat-l2">—</div></div>
+    <div class="stat-chip glass"><div class="stat-label">Max Est. Error</div><div class="stat-value" id="stat-est-max">—</div></div>
+    <div class="stat-chip glass"><div class="stat-label">PINN Iterations</div><div class="stat-value" id="stat-iters">—</div></div>
+  </div>
+
+  <!-- Heatmaps -->
+  <div class="section-title">Heatmaps</div>
+  <div class="heatmap-grid">
+
+    <div class="plot-card glass">
+      <div class="plot-card-header">
+        <div class="dot" style="background:#377eb8"></div>
+        <span class="plot-card-title">PINN Prediction</span>
+      </div>
+      <div class="plot-container" id="plot-pinn"></div>
+    </div>
+
+    <div class="plot-card glass">
+      <div class="plot-card-header">
+        <div class="dot" style="background:#f781bf"></div>
+        <span class="plot-card-title">True Solution</span>
+      </div>
+      <div class="plot-container" id="plot-true"></div>
+    </div>
+
+    <div class="plot-card glass">
+      <div class="plot-card-header">
+        <div class="dot" style="background:#ff7f00"></div>
+        <span class="plot-card-title">True Error &nbsp;|u<sub>exact</sub> − u<sub>PINN</sub>|</span>
+      </div>
+      <div class="plot-container" id="plot-etrue"></div>
+    </div>
+
+    <div class="plot-card glass">
+      <div class="plot-card-header">
+        <div class="dot" style="background:#4daf4a"></div>
+        <span class="plot-card-title">Estimated Error &nbsp;|e<sub>res</sub>|</span>
+      </div>
+      <div class="plot-container" id="plot-eest"></div>
+    </div>
+
+    <div class="plot-card glass">
+      <div class="plot-card-header">
+        <div class="dot" style="background:#984ea3"></div>
+        <span class="plot-card-title">Error Difference &nbsp;|e<sub>est</sub>| − |e<sub>true</sub>|</span>
+      </div>
+      <div class="plot-container" id="plot-ediff"></div>
+    </div>
+
+  </div>
+
+  <!-- Line plot + slider -->
+  <div class="section-title" id="slice-section-title">Slice Plot</div>
+  <div class="line-card glass">
+    <div class="plot-card-header">
+      <div class="dot" style="background:#377eb8"></div>
+      <span class="plot-card-title" id="line-title">Slice at fixed coordinate</span>
+    </div>
+    <div id="plot-line"></div>
+    <div class="slider-wrap">
+      <span class="slider-label" id="slider-axis-label">t =</span>
+      <input type="range" id="slice-slider" min="0" max="31" value="16" step="1" />
+      <span id="slice-value">0.500</span>
+    </div>
+  </div>
+
+  <footer>
+    <span>Building Trust in PINNs · Error Estimation through Finite Difference Methods</span>
+    <span>Data pre-computed with DeepXDE · Visualised with Plotly.js</span>
+    <span id="footer-experiment"></span>
+  </footer>
+
+</div><!-- /wrapper -->
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DATA_ROOT = './data';
+const GRID      = '32x32';
+const N         = 32;
+
+const PROBLEM_META = {
+  heat:            { desc: 'u_t = α u_xx · sinusoidal IC, zero Dirichlet BCs',   xLabel: 'x', yLabel: 't' },
+  wave:            { desc: 'u_tt = c² u_xx · sinusoidal IC, zero Dirichlet BCs', xLabel: 'x', yLabel: 't' },
+  drift_diffusion: { desc: 'u_t + β u_x = D u_xx · sinusoidal IC',               xLabel: 'x', yLabel: 't' },
+  poisson_2d:      { desc: '-(u_xx + u_yy) = f(x,y) · zero Dirichlet BCs',       xLabel: 'x', yLabel: 'y' },
+};
+
+const MODEL_META = {
+  well_trained_model:         { label: 'Well-Trained · 10k iters · 10k pts', cls: 'trained' },
+  randomly_initialized_model: { label: 'Random Init · 0 iters · seed 42',    cls: 'random'  },
+};
+
+// Plotly colours per series
+const C = {
+  pinn:  '#377eb8',
+  exact: '#e41a1c',
+  etrue: '#ff7f00',
+  eest:  '#4daf4a',
+  ediff: '#984ea3',
+};
+
+const LAYOUT_BASE = {
+  paper_bgcolor: 'transparent',
+  plot_bgcolor:  'rgba(255,255,255,0.35)',
+  margin: { t: 10, b: 50, l: 58, r: 14 },
+  font:   { family: "'IBM Plex Mono', monospace", size: 11, color: '#4a5470' },
+  xaxis:  { gridcolor: 'rgba(55,126,184,0.1)', zerolinecolor: 'rgba(55,126,184,0.2)' },
+  yaxis:  { gridcolor: 'rgba(55,126,184,0.1)', zerolinecolor: 'rgba(55,126,184,0.2)' },
+};
+
+const PLOT_CFG = { responsive: true, displayModeBar: false };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+let _d = null;          // loaded data bundle
+let _sliceIdx = 16;     // current slider row index
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FETCH WITH CACHE
+// ─────────────────────────────────────────────────────────────────────────────
+const _cache = {};
+
+async function fetchJSON(prob, model, filename) {
+  const key = `${prob}/${model}/${GRID}/${filename}`;
+  if (_cache[key]) return _cache[key];
+  const r = await fetch(`${DATA_ROOT}/${key}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status} → ${key}`);
+  _cache[key] = await r.json();
+  return _cache[key];
+}
+
+async function loadAll(prob, model) {
+  const [preds, trueSol, eTrueF, eEstF, eDiffF, meta] = await Promise.all([
+    fetchJSON(prob, model, 'predictions.json'),
+    fetchJSON(prob, model, 'true_solution.json'),
+    fetchJSON(prob, model, 'error_true.json'),
+    fetchJSON(prob, model, 'error_estimate.json'),
+    fetchJSON(prob, model, 'error_diff.json'),
+    fetchJSON(prob, model, 'meta.json'),
+  ]);
+  return {
+    pinn:   preds.data,
+    exact:  trueSol.data,
+    eTrue:  eTrueF.data,
+    eEst:   eEstF.data,
+    eDiff:  eDiffF.data,
+    meta,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HEATMAP HELPER
+// ─────────────────────────────────────────────────────────────────────────────
+function drawHeatmap(divId, xArr, yArr, zArr, cbTitle, xLabel, yLabel, colorscale, symmetric) {
+  const flat   = zArr.flat();
+  const absMax = Math.max(...flat.map(Math.abs));
+  const zmin   = symmetric ? -absMax : undefined;
+  const zmax   = symmetric ?  absMax : undefined;
+
+  const trace = {
+    type: 'heatmap',
+    x: xArr, y: yArr, z: zArr,
+    colorscale,
+    zmin, zmax,
+    colorbar: {
+      title: { text: cbTitle, side: 'right', font: { size: 10 } },
+      thickness: 12, len: 0.85, tickfont: { size: 9 },
+    },
+    hovertemplate: `${xLabel}: %{x:.3f}<br>${yLabel}: %{y:.3f}<br>%{z:.4e}<extra></extra>`,
+  };
+
+  const layout = {
+    ...LAYOUT_BASE,
+    xaxis: { ...LAYOUT_BASE.xaxis, title: { text: xLabel } },
+    yaxis: { ...LAYOUT_BASE.yaxis, title: { text: yLabel }, scaleanchor: 'x', scaleratio: 1 },
+  };
+
+  Plotly.react(divId, [trace], layout, PLOT_CFG);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LINE (SLICE) PLOT
+// ─────────────────────────────────────────────────────────────────────────────
+function drawSlice(idx) {
+  if (!_d) return;
+  const { pinn, exact, eTrue, eEst, meta } = _d;
+  const xArr   = meta.x_axis;
+  const yArr   = meta.y_axis;
+  const yLabel = meta.y_label ?? 'y';
+  const xLabel = meta.x_label ?? 'x';
+  const yVal   = yArr[idx];
+
+  // update slider display
+  document.getElementById('slice-value').textContent = yVal.toFixed(4);
+  const pct = (idx / (yArr.length - 1) * 100).toFixed(1);
+  document.getElementById('slice-slider').style.setProperty('--pct', pct + '%');
+
+  // slice each 2D array at row [idx]
+  const row = arr => arr[idx] ?? arr[0];
+
+  const traces = [
+    {
+      x: xArr, y: row(pinn),
+      mode: 'lines', name: 'PINN',
+      line: { color: C.pinn, width: 2.5 },
+      hovertemplate: `${xLabel}: %{x:.3f}<br>PINN: %{y:.4f}<extra></extra>`,
+    },
+    {
+      x: xArr, y: row(exact),
+      mode: 'lines', name: 'Exact',
+      line: { color: C.exact, width: 2, dash: 'dash' },
+      hovertemplate: `${xLabel}: %{x:.3f}<br>Exact: %{y:.4f}<extra></extra>`,
+    },
+    {
+      x: xArr, y: row(eTrue),
+      mode: 'lines', name: '|e_true|',
+      line: { color: C.etrue, width: 1.8, dash: 'dot' },
+      yaxis: 'y2',
+      hovertemplate: `${xLabel}: %{x:.3f}<br>|e_true|: %{y:.4e}<extra></extra>`,
+    },
+    {
+      x: xArr, y: row(eEst),
+      mode: 'lines', name: '|e_est|',
+      line: { color: C.eest, width: 1.8, dash: 'dashdot' },
+      yaxis: 'y2',
+      hovertemplate: `${xLabel}: %{x:.3f}<br>|e_est|: %{y:.4e}<extra></extra>`,
+    },
+  ];
+
+  const layout = {
+    ...LAYOUT_BASE,
+    margin: { t: 14, b: 52, l: 62, r: 62 },
+    xaxis: {
+      ...LAYOUT_BASE.xaxis,
+      title: { text: xLabel, font: { size: 11 } },
+    },
+    yaxis: {
+      ...LAYOUT_BASE.yaxis,
+      title: { text: 'u(x)', font: { size: 11 } },
+    },
+    yaxis2: {
+      title: { text: 'error', font: { size: 11 } },
+      overlaying: 'y', side: 'right',
+      gridcolor: 'rgba(255,127,0,0.08)',
+      zerolinecolor: 'rgba(255,127,0,0.2)',
+      tickfont: { size: 10 },
+    },
+    legend: {
+      orientation: 'h', x: 0.01, y: 1.06,
+      font: { size: 10 }, bgcolor: 'transparent',
+    },
+    shapes: [{
+      type: 'line', xref: 'paper',
+      x0: 0, x1: 1,
+      y0: 0, y1: 0,
+      yref: 'y2',
+      line: { color: 'rgba(0,0,0,0.15)', width: 1 },
+    }],
+  };
+
+  Plotly.react('plot-line', traces, layout, PLOT_CFG);
+
+  // update title
+  document.getElementById('line-title').textContent =
+    `Slice at ${yLabel} = ${yVal.toFixed(4)}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER (called on every dropdown change)
+// ─────────────────────────────────────────────────────────────────────────────
+async function render() {
+  const prob  = document.getElementById('sel-problem').value;
+  const model = document.getElementById('sel-model').value;
+  const pmeta = PROBLEM_META[prob];
+
+  // immediate UI updates
+  document.getElementById('prob-desc').textContent = pmeta.desc;
+  const badge = document.getElementById('model-badge');
+  badge.textContent = MODEL_META[model].label;
+  badge.className   = `model-badge ${MODEL_META[model].cls}`;
+  document.getElementById('slider-axis-label').textContent = pmeta.yLabel + ' =';
+  document.getElementById('section-title' )?.remove();
+
+  showSpinners();
+
+  try {
+    _d = await loadAll(prob, model);
+  } catch (e) {
+    showError(`Could not load data for <b>${prob} / ${model}</b>.<br>
+               <small>Run <code>generate_demo_data.py</code> first, then serve with <code>python -m http.server 8080</code></small><br>
+               <small>${e.message}</small>`);
+    console.error(e);
+    return;
+  }
+
+  const { meta } = _d;
+  const xLabel   = meta.x_label ?? 'x';
+  const yLabel   = meta.y_label ?? 'y';
+  const xAxis    = meta.x_axis;
+  const yAxis    = meta.y_axis;
+
+  // stats
+  document.getElementById('stat-max'    ).textContent = meta.max_error_true.toExponential(3);
+  document.getElementById('stat-mean'   ).textContent = meta.mean_error_true.toExponential(3);
+  document.getElementById('stat-l2'     ).textContent = meta.l2_relative.toExponential(3);
+  document.getElementById('stat-est-max').textContent = meta.max_error_estimate.toExponential(3);
+  document.getElementById('stat-iters'  ).textContent = meta.pinn_iterations.toLocaleString();
+
+  document.getElementById('footer-experiment').textContent =
+    `${prob} · ${model.replace(/_/g,' ')} · grid ${GRID}`;
+
+  // heatmaps
+  drawHeatmap('plot-pinn',  xAxis, yAxis, _d.pinn,  'u',            xLabel, yLabel, 'Blues',   false);
+  drawHeatmap('plot-true',  xAxis, yAxis, _d.exact, 'u',            xLabel, yLabel, 'RdPu',    false);
+  drawHeatmap('plot-etrue', xAxis, yAxis, _d.eTrue, '|e_true|',     xLabel, yLabel, 'YlOrRd',  false);
+  drawHeatmap('plot-eest',  xAxis, yAxis, _d.eEst,  '|e_est|',      xLabel, yLabel, 'YlGn',    false);
+  drawHeatmap('plot-ediff', xAxis, yAxis, _d.eDiff, 'e_est−e_true', xLabel, yLabel, 'RdBu',    true);
+
+  // slider: reset to middle
+  const slider = document.getElementById('slice-slider');
+  slider.max    = yAxis.length - 1;
+  _sliceIdx     = Math.floor(yAxis.length / 2);
+  slider.value  = _sliceIdx;
+
+  drawSlice(_sliceIdx);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOADING / ERROR UI
+// ─────────────────────────────────────────────────────────────────────────────
+const HEATMAP_IDS = ['plot-pinn','plot-true','plot-etrue','plot-eest','plot-ediff'];
+
+function showSpinners() {
+  HEATMAP_IDS.forEach(id => {
+    document.getElementById(id).innerHTML =
+      `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
+  });
+  document.getElementById('plot-line').innerHTML =
+    `<div class="state-box" style="height:360px"><div class="spinner"></div><span>Loading…</span></div>`;
+}
+
+function showError(msg) {
+  HEATMAP_IDS.forEach(id => {
+    document.getElementById(id).innerHTML =
+      `<div class="state-box"><span class="error-icon">⚠</span><span>${msg}</span></div>`;
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SLIDER EVENT
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('slice-slider').addEventListener('input', e => {
+  _sliceIdx = parseInt(e.target.value, 10);
+  drawSlice(_sliceIdx);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('sel-problem').addEventListener('change', render);
+document.getElementById('sel-model'  ).addEventListener('change', render);
+
+render();
+</script>
+</body>
+</html>

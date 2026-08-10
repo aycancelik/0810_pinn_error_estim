@@ -1,0 +1,33 @@
+<head>
+               <script src="https://cdn.plot.ly/plotly-3.5.1.min.js" charset="utf-8"></script>
+</head>
+
+<h1>Hello this is my nice webdemo</h1>
+
+<p>This is a paragraph.
+    I like tomatoes and tea. Spending time in nature as well.
+</p>
+
+<div id="tester" style="width:600px;height:600px;"></div>
+
+<script>
+	TESTER = document.getElementById('tester');
+	// Plotly.newPlot( TESTER, [{
+	// x: [1, 2, 3, 4, 5],
+	// y: [1, 2, 4, 8, 16] }], {
+	// margin: { t: 0 } } );
+
+	var data = [
+  {
+    z: [[1, null, 30, 50, 1], [20, 1, 60, 80, 30], [30, 60, 1, -10, 20]],
+    x: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+    y: ['Morning', 'Afternoon', 'Evening'],
+    type: 'heatmap',
+    hoverongaps: false
+  }
+];
+
+Plotly.newPlot('tester', data);
+
+</script>
+

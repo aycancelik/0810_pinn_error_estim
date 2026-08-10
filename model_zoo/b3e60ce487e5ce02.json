@@ -1,0 +1,29 @@
+{
+  "model_hash": "b3e60ce487e5ce02",
+  "config": {
+    "layers": [
+      2,
+      20,
+      20,
+      20,
+      1
+    ],
+    "activation": "tanh",
+    "n_iterations": 10000,
+    "num_domain": 10000,
+    "num_test": 1000,
+    "seed": 42
+  },
+  "problem": {
+    "class": "Heat1DProblemSineIC",
+    "spatial_bounds": [
+      0.0,
+      1.0
+    ],
+    "temporal_bounds": [
+      0.0,
+      1.0
+    ]
+  },
+  "training_time": 81.72829103469849
+}

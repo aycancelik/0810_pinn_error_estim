@@ -1,0 +1,37 @@
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[project]
+name = "pinn-error-estimation"
+version = "0.1.0"
+description = "PINN Error Estimation via Finite Difference Methods"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name="Aleksander Krasowski", email="aleksander.krasowski@hhi.fraunhofer.de" },
+    { name="Aycan Celik", email="aycan.celik@hhi.fraunhofer.de" },
+]
+
+dependencies = [
+    "deepxde",
+    "latex>=0.7.0",
+    "matplotlib",
+    "numpy",
+    "polars",
+    "scipy",
+    "seaborn",
+    "torch",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+jupyter = [
+    "jupyter",
+    "jupyterlab",
+    "ipython"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pinn_error"]
