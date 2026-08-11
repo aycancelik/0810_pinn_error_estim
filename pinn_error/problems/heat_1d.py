@@ -115,6 +115,7 @@ class Heat1DProblemSineIC(BaseProblem):
             values = np.sin(n * np.pi * x / L)
             return np.asarray(values).reshape(-1)
 
+
     def exact_solution(self, x, t) -> np.ndarray:
         """Returns the exact solution for given x and t.
 

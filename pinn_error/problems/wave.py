@@ -47,14 +47,15 @@ class Wave1D(BaseProblem):
         u_xx = dde.grad.hessian(u, x, i=0, j=0)
         return u_tt - (self.propagation_speed**2) * u_xx
 
+
     def exact_solution(self, x, t) -> np.ndarray:
         """Exact solution for general propagation speed"""
         L = self.domain.x_max
         n = self.frequency
         c = self.propagation_speed
-
         # Single mode solution: u(x,t) = sin(nπx/L) * cos(cnπt/L)
         return np.sin(n * np.pi * x / L) * np.cos(c * n * np.pi * t / L)
+
 
     def initial_condition(self, x) -> torch.Tensor | np.ndarray:
         """Simplified IC: u(x,0) = sin(nπx/L)"""
@@ -63,7 +64,12 @@ class Wave1D(BaseProblem):
         if isinstance(x, torch.Tensor):
             return torch.sin(n * torch.pi * x / L)
         else:
-            return np.sin(n * np.pi * x / L)
+            # if x has both space and time
+            if len(x.shape) > 1 and x.shape[1] > 1:
+                x = x[:, 0:1]  # extract x coord
+            values = np.sin(n * np.pi * x / L)
+            return np.asarray(values).reshape(-1)
+
 
     def output_transform(self, x, u) -> torch.Tensor:
         """Hard constraint for zero BCs and simple sinusoidal IC"""
@@ -72,11 +78,8 @@ class Wave1D(BaseProblem):
         _t = x[:, 1:2]
         x_min = self.domain.x_min
         x_max = self.domain.x_max
-
-        return u * _t**2 * (_x - x_min) * (x_max - _x) + torch.sin(
-            n * torch.pi * _x / x_max
-        )
-
+        return u * _t**2 * (_x - x_min) * (x_max - _x) + torch.sin(n * torch.pi * _x / x_max)
+                
 
     def output_transform_bc_only(self, x, u) -> torch.Tensor:
         """

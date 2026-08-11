@@ -829,6 +829,8 @@ class FDMSolverWave1D:
         problem: Wave1D,
         domain: ProblemDomain,
         pinn_model: PINNTrainer,
+        hard_constrain_initial: bool = False,
+        hard_constrain_boundary: bool = True,
     ):
         """Initialize the FDM solver for the 1D wave equation.
 
@@ -841,13 +843,28 @@ class FDMSolverWave1D:
         Args:
             nx (int): Number of spatial grid points.
             nt (int): Number of temporal grid points.
-            problem (Wave1D): The problem definition.
+            problem (BaseProblem): The problem definition.
             domain (ProblemDomain): The problem domain.
             pinn_model (PINNTrainer): The trained PINN model.
+            hard_constrain_initial (bool, optional): Whether IC is hard-constrained
+                    in the PINN (i.e. constraint_mode="hard"). If False, the actual
+                    pointwise error at t=0 is computed instead of assuming it's zero.
+                    Should match the PINNTrainer's constraint_mode used to train
+                    pinn_model: True for "hard", False for "soft_ic"/"soft_full".
+                    Note that even with hard constraints we encounter some
+                    numerical error at t=0, hence there is a non-zero
+                    (but very close to zero) initial error step.
+            hard_constrain_boundary (bool, optional): Whether BC is hard-constrained
+                    in the PINN. If False, the actual boundary error is computed at
+                    every time step instead of assuming it's zero. Should be False
+                    only for constraint_mode="soft_full" (both "hard" and "soft_ic"
+                    hard-constrain BC). Defaults to True.
         """
         self.problem = problem
         self.domain = domain
         self.pinn_model = pinn_model
+        self.hard_constrain_initial = hard_constrain_initial
+        self.hard_constrain_boundary = hard_constrain_boundary
 
         self.nx = nx
         self.nt = nt
@@ -917,31 +934,67 @@ class FDMSolverWave1D:
         self._build_spatial_operator()
 
         e = np.zeros((self.nt, self.nx))
-        start_time = time.time()
+        if not (self.hard_constrain_initial and self.hard_constrain_boundary):  
+            # potentially less stable but accounts for any numerical issues at t0
+            e[0, :] = self.problem.initial_condition(self.x) - self.pinn_model.predict(
+                np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
+            ).flatten()
 
+        start_time = time.time()
         x_int = self.x
 
+        def _boundary_error(t_val: float) -> np.ndarray:
+            """Actual pointwise error at x_min/x_max at a given time. This is
+            known/prescribed data (same convention as
+            FDMSolverDriftDiffusion._get_boundary_values), not something that
+            needs residual integration -- used when BC is soft."""
+            x_bd = np.array([self.x[0], self.x[-1]])
+            t_bd = t_val * np.ones_like(x_bd)
+            return self.problem.exact_solution(x_bd, t_bd) - self.pinn_model.predict(
+                np.column_stack([x_bd, t_bd])
+            ).flatten()
+ 
         # First step: de/dt(x,0) = 0 implies e^{-1} = e^1.
         # With e^0 = 0 this simplifies to:
         #   e^1 = -0.5 * dt^2 * R^0
         # (or more generally: e^1 = e^0 + 0.5*dt^2*(L@e^0 - R^0))
+        # NOTE: this still assumes the PINN's initial velocity du/dt(x,0)
+        # matches the true velocity IC (both taken as 0). That's only
+        # guaranteed under constraint_mode="hard" (output_transform's `_t**2`
+        # factor enforces it structurally); under soft_ic/soft_full nothing
+        # currently supervises the velocity IC, so there's an unaccounted
+        # error contribution from that mismatch in this first step.
         R_0 = self.pinn_model.residual(
             np.column_stack([x_int, self.t[0] * np.ones_like(x_int)])
         ).flatten()
+        # PDE residual at BCs is meaningless (deepxde applies the PDE operator
+        # there too); boundary error is handled separately below via direct
+        # injection, not via residual integration.
+        R_0[0] = 0.0
+        R_0[-1] = 0.0
         e[1] = e[0] + 0.5 * self.dt**2 * (self.spatial_operator @ e[0] - R_0)
-        e[1, 0] = 0.0  # error at x=0
-        e[1, -1] = 0.0  # error at x=L
-
+        if self.hard_constrain_boundary:
+            e[1, 0] = 0.0  # error at x=0
+            e[1, -1] = 0.0  # error at x=L
+        else:
+            e[1, [0, -1]] = _boundary_error(self.t[1])
+ 
         for n in range(1, self.nt - 1):
             R_n = self.pinn_model.residual(
                 np.column_stack([x_int, self.t[n] * np.ones_like(x_int)])
             ).flatten()
+            R_n[0] = 0.0
+            R_n[-1] = 0.0
             e[n + 1] = 2 * e[n] - e[n - 1] + self.dt**2 * (self.spatial_operator @ e[n] - R_n)
-            e[n + 1, 0] = 0.0  # error at x=0
-            e[n + 1, -1] = 0.0  # error at x=L
-
+            if self.hard_constrain_boundary:
+                e[n + 1, 0] = 0.0  # error at x=0
+                e[n + 1, -1] = 0.0  # error at x=L
+            else:
+                e[n + 1, [0, -1]] = _boundary_error(self.t[n + 1])
+ 
         self._run_time = time.time() - start_time
         return e
+
 
     @property
     def run_time(self) -> float:

@@ -129,6 +129,30 @@ class DriftDiffusion(BaseProblem):
         # --- Final transformed output ---
         return ic_at_x + spatial_bc_correction + nn_factor * u
 
+
+    def output_transform_bc_only(self, x, u) -> torch.Tensor:
+        """
+        Hard constraint for boundary conditions only, leaving IC as soft constraint.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor with shape (N, 2) where columns are (x, t).
+        u : torch.Tensor
+            Output tensor with shape (N, 1) representing u(x,t).
+
+        Returns
+        -------
+        torch.Tensor
+            Transformed output tensor satisfying BCs.
+        """
+        _x = x[:, 0:1]
+        _t = x[:, 1:2]
+        x_min = self.domain.x_min
+        x_max = self.domain.x_max
+        return (_x - x_min) * (x_max - _x) * u
+    
+
     def initial_condition(self, x) -> torch.Tensor | np.ndarray:
         """Initial condition u(x,0) = initial_concentration * sin(frequency * pi * x + phase_shift)
 
@@ -152,6 +176,7 @@ class DriftDiffusion(BaseProblem):
             return A * torch.sin(k * x + phi)
         else:
             return A * np.sin(k * x + phi)
+
 
     def exact_solution(self, x, t) -> np.ndarray:
         """Returns the exact solution for given x and t.

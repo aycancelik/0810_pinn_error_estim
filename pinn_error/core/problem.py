@@ -140,6 +140,7 @@ class BaseProblem(ABC):
         """
         pass
 
+    
     def output_transform_bc_only(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """Applies output transformation for hard constraints on boundary conditions only
 
