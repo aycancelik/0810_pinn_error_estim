@@ -248,6 +248,7 @@ class PINNTrainer:
                 "num_domain": self.config.num_domain,
                 "num_test": self.config.num_test,
                 "seed": self.config.seed,
+                "constraint_mode": self.config.constraint_mode,
             },
             "problem": {
                 "class": self.problem.__class__.__name__,

@@ -9,9 +9,11 @@ Supports:
 - poisson_2d: 2D Poisson equation
 
 Usage:
-    python run_experiment.py --problem heat --n_iterations 1000 --nx 32 --nt 32
-    python run_experiment.py --problem poisson_1d --n_iterations 1000 --nx 32
-    python run_experiment.py --problem poisson_2d --n_iterations 1000 --nx 16 --ny 16
+    python run_experiment.py --problem heat --constraint_mode {hard, soft_ic, soft} --n_iterations 1000 --nx 32 --nt 32
+    python run_experiment.py --problem poisson_1d --constraint_mode {hard, soft_ic, soft} --n_iterations 1000 --nx 32
+    python run_experiment.py --problem poisson_2d --constraint_mode {hard, soft_ic, soft} --n_iterations 1000 --nx 16 --ny 16
+
+*Please note that the default constraint mode is 'hard'.  
 """
 
 import argparse
@@ -238,7 +240,7 @@ def parse_args():
     parser.add_argument(
         "--constraint_mode",
         type=str,
-        choices=["hard", "soft_ic", "soft_full"],
+        choices=["hard", "soft_ic", "soft"],
         default="hard",
         help=(
             "How IC/BC are enforced: 'hard' constrains both IC and BC via the "
