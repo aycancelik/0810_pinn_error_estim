@@ -77,6 +77,28 @@ class Wave1D(BaseProblem):
             n * torch.pi * _x / x_max
         )
 
+
+    def output_transform_bc_only(self, x, u) -> torch.Tensor:
+        """
+        Hard constraint for boundary conditions only, leaving IC as soft constraint.
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor with shape (N, 2) where columns are (x, t).
+        u : torch.Tensor
+            Output tensor with shape (N, 1) representing u(x,t).
+
+        Returns
+        -------
+        torch.Tensor
+            Transformed output tensor satisfying BCs.
+        """
+        _x = x[:, 0:1]
+        x_min = self.domain.x_min
+        x_max = self.domain.x_max
+        return (_x - x_min) * (x_max - _x) * u
+
+
     # def output_transform(self, x, u) -> torch.Tensor:
     #     """Hard constraint for initial and boundary conditions with sinusoidal IC.
 
