@@ -109,10 +109,11 @@ class Heat1DProblemSineIC(BaseProblem):
         if isinstance(x, torch.Tensor):
             return torch.sin(n * torch.pi * x / L)
         else:
-            # if x has both space and time 
-            if len(x.shape) > 1 and x.shape[1] > 1: 
-                x = x[:, 0:1] # extract x coord
-            return np.sin(n * np.pi * x / L).reshape(-1, 1)
+            # if x has both space and time
+            if len(x.shape) > 1 and x.shape[1] > 1:
+                x = x[:, 0:1]  # extract x coord
+            values = np.sin(n * np.pi * x / L)
+            return np.asarray(values).reshape(-1)
 
     def exact_solution(self, x, t) -> np.ndarray:
         """Returns the exact solution for given x and t.

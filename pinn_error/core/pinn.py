@@ -102,6 +102,7 @@ class PINNTrainer:
         self.geom = self.problem.create_geometry()
         self._init_model()
 
+
     def _bc_target(self, X: np.ndarray) -> np.ndarray:
         """Target values for a soft Dirichlet BC loss term.
 
@@ -117,6 +118,7 @@ class PINNTrainer:
             return self.problem.exact_solution(X[:, 0:1], X[:, 1:2])
         else:
             return self.problem.exact_solution(X[:, 0:1])
+
 
     def _init_model(self):
         """Initializes the model etc"""
@@ -140,44 +142,39 @@ class PINNTrainer:
         )
 
         if mode == "hard":
-            # both IC and BC hard-constrained
-            transform = self.problem.output_transform
+            transform = self.problem.output_transform          # IC + BC hard-constrained
         elif mode == "soft_ic":
-            # BC hard-constrained, IC learned via soft loss
-            transform = self.problem.output_transform_bc_only
+            transform = self.problem.output_transform_bc_only   # BC hard-constrained only
         else:  # soft_full
-            # no hard constraints at all; identity output transform
             transform = lambda x, u: u
         self.network.apply_output_transform(transform)
 
-        # BC needs a soft loss term only when it isn't hard-constrained
-        # structurally (i.e. only in "soft_full" mode -- "hard" and "soft_ic"
-        # both bake BC into the network via output_transform above)
-        needs_soft_bc = mode == "soft_full"
+        needs_soft_bc = mode == "soft_full"          # BC baked in for "hard" and "soft_ic"
+        needs_soft_ic = mode != "hard"                # IC baked in only for "hard"
+
+        soft_bc = dde.icbc.DirichletBC(
+            self.geom, self._bc_target, lambda _, on_boundary: on_boundary
+        )
 
         if is_time_dependent:
-            ic_bcs = [
-                dde.icbc.IC(self.geom, self.problem.initial_condition, lambda _, on_initial: on_initial)
-            ]
-            if needs_soft_bc:
+            ic_bcs = []
+            if needs_soft_ic:
                 ic_bcs.append(
-                    dde.icbc.DirichletBC(self.geom, self._bc_target, lambda _, on_boundary: on_boundary)
+                    dde.icbc.IC(self.geom, self.problem.initial_condition, lambda _, on_initial: on_initial)
                 )
+            if needs_soft_bc:
+                ic_bcs.append(soft_bc)
             data = dde.data.TimePDE(
                 geometryxtime=self.geom,
                 pde=self.problem.pde,
                 ic_bcs=ic_bcs,
                 num_domain=self.config.num_domain,
                 num_test=self.config.num_test,
-                num_initial=self.config.num_initial,
-                num_boundary=self.config.num_boundary,
+                num_initial=self.config.num_initial if needs_soft_ic else 0,
+                num_boundary=self.config.num_boundary if needs_soft_bc else 0,
             )
         else:
-            bcs = []
-            if needs_soft_bc:
-                bcs.append(
-                    dde.icbc.DirichletBC(self.geom, self._bc_target, lambda _, on_boundary: on_boundary)
-                )
+            bcs = [soft_bc] if needs_soft_bc else []
             data = dde.data.PDE(
                 geometry=self.geom,
                 pde=self.problem.pde,
@@ -187,19 +184,20 @@ class PINNTrainer:
                 num_boundary=self.config.num_boundary if needs_soft_bc else 0,
             )
 
-        self.model = dde.Model(data, self.network)
+            self.model = dde.Model(data, self.network)
 
-        self.callbacks = []
-        if self.config.restore_best:
-            self.callbacks.append(
-                dde.callbacks.ModelCheckpoint(
-                    self.checkpoint_path,
-                    save_better_only=True,
-                    period=1,
+            self.callbacks = []
+            if self.config.restore_best:
+                self.callbacks.append(
+                    dde.callbacks.ModelCheckpoint(
+                        self.checkpoint_path,
+                        save_better_only=True,
+                        period=1,
+                    )
                 )
-            )
 
-        self.model.compile("adam", lr=1e-3)
+            self.model.compile("adam", lr=1e-3)
+
 
     def _compute_model_hash(self) -> str:
         """Compute a unique hash based on config and problem parameters."""
