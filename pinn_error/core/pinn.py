@@ -37,9 +37,9 @@ class PINNConfig:
     num_domain: int = 100
     # num points to eval loss (residual) during train
     num_test: int = 1000
-    
-    num_initial: int = 100 # num points to train initial condition
-    num_boundary: int = 100 # num points to train boundary condition
+
+    num_initial: int = 100  # num points to train initial condition
+    num_boundary: int = 100  # num points to train boundary condition
 
     # constraint mode: how IC/BC are enforced during training
     #   "hard"      -> both IC and BC hard-constrained via output_transform (baseline)
@@ -58,9 +58,8 @@ class PINNConfig:
     seed: Optional[int] = None
 
     # model caching
-    use_cache: bool = False  # If True, load cached model if available --for soft constraints we set it to false 
+    use_cache: bool = False  # If True, load cached model if available --for soft constraints we set it to false
     cache_dir: Optional[str] = None  # Override default model_zoo directory
-
 
 
 class PINNTrainer:
@@ -102,7 +101,6 @@ class PINNTrainer:
         self.geom = self.problem.create_geometry()
         self._init_model()
 
-
     def _bc_target(self, X: np.ndarray) -> np.ndarray:
         """Target values for a soft Dirichlet BC loss term.
 
@@ -118,7 +116,6 @@ class PINNTrainer:
             return self.problem.exact_solution(X[:, 0:1], X[:, 1:2])
         else:
             return self.problem.exact_solution(X[:, 0:1])
-
 
     def _init_model(self):
         """Initializes the model etc"""
@@ -142,15 +139,17 @@ class PINNTrainer:
         )
 
         if mode == "hard":
-            transform = self.problem.output_transform          # IC + BC hard-constrained
+            transform = self.problem.output_transform  # IC + BC hard-constrained
         elif mode == "soft_ic":
-            transform = self.problem.output_transform_bc_only   # BC hard-constrained only
+            transform = (
+                self.problem.output_transform_bc_only
+            )  # BC hard-constrained only
         else:  # soft_full
             transform = lambda x, u: u
         self.network.apply_output_transform(transform)
 
-        needs_soft_bc = mode == "soft_full"          # BC baked in for "hard" and "soft_ic"
-        needs_soft_ic = mode != "hard"                # IC baked in only for "hard"
+        needs_soft_bc = mode == "soft_full"  # BC baked in for "hard" and "soft_ic"
+        needs_soft_ic = mode != "hard"  # IC baked in only for "hard"
 
         soft_bc = dde.icbc.DirichletBC(
             self.geom, self._bc_target, lambda _, on_boundary: on_boundary
@@ -160,7 +159,11 @@ class PINNTrainer:
             ic_bcs = []
             if needs_soft_ic:
                 ic_bcs.append(
-                    dde.icbc.IC(self.geom, self.problem.initial_condition, lambda _, on_initial: on_initial)
+                    dde.icbc.IC(
+                        self.geom,
+                        self.problem.initial_condition,
+                        lambda _, on_initial: on_initial,
+                    )
                 )
             if needs_soft_bc:
                 ic_bcs.append(soft_bc)
@@ -184,20 +187,19 @@ class PINNTrainer:
                 num_boundary=self.config.num_boundary if needs_soft_bc else 0,
             )
 
-            self.model = dde.Model(data, self.network)
+        self.model = dde.Model(data, self.network)
 
-            self.callbacks = []
-            if self.config.restore_best:
-                self.callbacks.append(
-                    dde.callbacks.ModelCheckpoint(
-                        self.checkpoint_path,
-                        save_better_only=True,
-                        period=1,
-                    )
+        self.callbacks = []
+        if self.config.restore_best:
+            self.callbacks.append(
+                dde.callbacks.ModelCheckpoint(
+                    self.checkpoint_path,
+                    save_better_only=True,
+                    period=1,
                 )
+            )
 
-            self.model.compile("adam", lr=1e-3)
-
+        self.model.compile("adam", lr=1e-3)
 
     def _compute_model_hash(self) -> str:
         """Compute a unique hash based on config and problem parameters."""
@@ -332,10 +334,7 @@ class PINNTrainer:
         """
         return self.model.predict(X)
 
-    def residual(
-            self, 
-            X: np.ndarray | torch.Tensor
-        ) -> np.ndarray | torch.Tensor:
+    def residual(self, X: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
         """Computes the PDE residual at given points
 
         Args:
@@ -344,7 +343,7 @@ class PINNTrainer:
         Returns:
             Residual values at the input points
         """
-        residual = None 
+        residual = None
         if isinstance(X, np.ndarray):
             residual = self.model.predict(
                 X,
