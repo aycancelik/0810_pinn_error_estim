@@ -609,7 +609,8 @@ class FDMSolverDriftDiffusion:
         problem: DriftDiffusion,
         domain: ProblemDomain,
         pinn_model: PINNTrainer,
-        hard_constrain_initial: bool = True,
+        hard_constrain_initial: bool = False,
+        hard_constrain_boundary: bool = True,
 
     ):
         """Initialize the FDM solver for the 1D Drift-Diffusion equation.
@@ -634,7 +635,8 @@ class FDMSolverDriftDiffusion:
         self.problem = problem
         self.domain = domain
         self.pinn_model = pinn_model
-        self.hc_initial = hard_constrain_initial
+        self.hard_constrain_initial = hard_constrain_initial
+        self.hard_constrain_boundary = hard_constrain_boundary
 
         self.nx = nx
         self.nt = nt
@@ -766,52 +768,78 @@ class FDMSolverDriftDiffusion:
 
     def residual_integration(self):
         """Integrate PINN residuals to estimate error.
-
+ 
         Returns:
             np.ndarray: Error estimate array with shape (nt, nx).
         """
         self._build_matrices()
-
+ 
         start_time = time.time()
-
+ 
         # Initialize error
         e = np.zeros((self.nt, self.nx))
-
+        if not (self.hard_constrain_initial and self.hard_constrain_boundary):
+            # potentially less stable but accounts for any numerical issues at t0
+            # (also covers the boundary entries when BC is soft: at t=0 they're
+            # just the same pointwise error formula evaluated at x=x_min/x_max)
+            e[0, :] = self.problem.initial_condition(self.x) - self.pinn_model.predict(
+                np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
+            ).flatten()
+ 
+        def _get_boundary_error(t: float) -> np.ndarray:
+            """Actual pointwise error at x_min/x_max at a given time. This is
+            known/prescribed data (see _get_boundary_values above, which does
+            the same thing for the true solution u), not something that needs
+            residual integration -- used when BC is soft."""
+            x_bd = np.array([self.domain.spatial_bounds[0], self.domain.spatial_bounds[1]])
+            t_bd = t * np.ones_like(x_bd)
+            u_exact = self.problem.exact_solution(x_bd, t_bd)
+            u_pinn = self.pinn_model.predict(np.column_stack([x_bd, t_bd])).flatten()
+            return u_exact - u_pinn
+ 
         # Get residual at initial time
         R_curr = self.pinn_model.residual(
             np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
         ).flatten()
         R_curr[0] = 0.0  # BC points
         R_curr[-1] = 0.0
-
+ 
         # Time stepping
         for n in range(self.nt - 1):
             t_next = self.t[n + 1]
-
+ 
             # RHS from previous step
             rhs = self.M_rhs @ e[n]
-
+ 
             # Compute residual at next time step
             R_next = self.pinn_model.residual(
                 np.column_stack([self.x, t_next * np.ones_like(self.x)])
             ).flatten()
             R_next[0] = 0.0  # BC points
             R_next[-1] = 0.0
-
+ 
             residual_source = - 0.5 * self.dt * (
                 R_curr + R_next
             )
             rhs += residual_source
-
-            # Homogeneous BCs for error (PINN satisfies BCs exactly)
-            rhs[0] = 0.0
-            rhs[-1] = 0.0
-
+ 
+            # M_lhs/M_rhs bake in identity/zero boundary rows unconditionally
+            # (see _build_matrices), so rhs[0]/rhs[-1] are already ~0 at this
+            # point regardless of hard_constrain_boundary. If BC is hard-
+            # constrained, that's exactly what we want (e stays 0 at the
+            # boundary for all t). If BC is soft, overwrite with the actual
+            # boundary error directly via _get_boundary_error.
+            if self.hard_constrain_boundary:
+                rhs[0] = 0.0
+                rhs[-1] = 0.0
+            else:
+                rhs[[0, -1]] = _get_boundary_error(t_next)
+ 
             # Solve for next error step
             e[n + 1] = spsolve(self.M_lhs, rhs)
-
+ 
             R_curr = R_next  # Store for next iteration
-
+ 
         self._run_time = time.time() - start_time
         return e
 

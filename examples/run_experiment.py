@@ -9,9 +9,9 @@ Supports:
 - poisson_2d: 2D Poisson equation
 
 Usage:
-    python run_experiment.py --problem heat --constraint_mode {hard, soft_ic, soft} --n_iterations 1000 --nx 32 --nt 32
-    python run_experiment.py --problem poisson_1d --constraint_mode {hard, soft_ic, soft} --n_iterations 1000 --nx 32
-    python run_experiment.py --problem poisson_2d --constraint_mode {hard, soft_ic, soft} --n_iterations 1000 --nx 16 --ny 16
+    python run_experiment.py --problem heat --constraint_mode {hard, soft_ic, soft_full} --n_iterations 1000 --nx 32 --nt 32
+    python run_experiment.py --problem poisson_1d --constraint_mode {hard, soft_ic, soft_full} --n_iterations 1000 --nx 32
+    python run_experiment.py --problem poisson_2d --constraint_mode {hard, soft_ic, soft_full} --n_iterations 1000 --nx 16 --ny 16
 
 *Please note that the default constraint mode is 'hard'.  
 """

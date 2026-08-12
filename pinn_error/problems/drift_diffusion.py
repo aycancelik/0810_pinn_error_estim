@@ -34,6 +34,7 @@ class DriftDiffusion(BaseProblem):
         self.velocity_x = velocity_x
         self.diffusivity = diffusivity
 
+
     def pde(self, x, u) -> torch.Tensor:
         """Defines the PDE for the 1D heat equation.
 
@@ -53,6 +54,7 @@ class DriftDiffusion(BaseProblem):
         u_x = dde.grad.jacobian(u, x, i=0, j=0)
         u_xx = dde.grad.hessian(u, x, i=0, j=0)
         return u_t - self.diffusivity * u_xx + self.velocity_x * u_x
+
 
     def output_transform(self, x, u) -> torch.Tensor:
         """Hard constraint for initial and boundary conditions.
@@ -131,26 +133,57 @@ class DriftDiffusion(BaseProblem):
 
 
     def output_transform_bc_only(self, x, u) -> torch.Tensor:
-        """
-        Hard constraint for boundary conditions only, leaving IC as soft constraint.
-
+        """Hard constraint for boundary conditions only; IC is soft (constraint_mode='soft_ic').
+ 
+        Same spatial-interpolation trick as output_transform, but without
+        the ic_at_x baseline and without the `_t` vanishing factor -- so t=0
+        is left unconstrained and must be learned from the soft IC loss term
+        set up in PINNTrainer._init_model. BC is still satisfied exactly for
+        all t (including t=0) via bc_interp below.
+ 
         Parameters
         ----------
         x : torch.Tensor
             Input tensor with shape (N, 2) where columns are (x, t).
         u : torch.Tensor
-            Output tensor with shape (N, 1) representing u(x,t).
-
+            Raw NN output with shape (N, 1).
+ 
         Returns
         -------
         torch.Tensor
-            Transformed output tensor satisfying BCs.
+            Transformed output satisfying BCs only.
         """
+        n = self.frequency
+        A = self.initial_concentration
+        phi = self.phase_shift
+        D = self.diffusivity
+        beta = self.velocity_x
+ 
         _x = x[:, 0:1]
         _t = x[:, 1:2]
-        x_min = self.domain.x_min
-        x_max = self.domain.x_max
-        return (_x - x_min) * (x_max - _x) * u
+ 
+        x_min = torch.tensor(self.domain.x_min)
+        x_max = torch.tensor(self.domain.x_max)
+        L = x_max - x_min
+ 
+        k = n * np.pi / L
+ 
+        # Boundary values from the exact solution, valid for all t (unlike
+        # output_transform's ic_at_x baseline, there's nothing here that
+        # only holds at t=0)
+        decay = torch.exp(-D * k**2 * _t)
+        g_min_t = A * torch.sin(phi + k * (x_min - beta * _t)) * decay
+        g_max_t = A * torch.sin(phi + k * (x_max - beta * _t)) * decay
+ 
+        weight_min = (x_max - _x) / L  # = 1 at x_min, = 0 at x_max
+        weight_max = (_x - x_min) / L  # = 0 at x_min, = 1 at x_max
+ 
+        bc_interp = weight_min * g_min_t + weight_max * g_max_t
+ 
+        # zero at x_min and x_max only (no _t factor, since t=0 is soft now)
+        nn_factor = (_x - x_min) * (x_max - _x)
+ 
+        return bc_interp + nn_factor * u
     
 
     def initial_condition(self, x) -> torch.Tensor | np.ndarray:
@@ -175,7 +208,11 @@ class DriftDiffusion(BaseProblem):
         if isinstance(x, torch.Tensor):
             return A * torch.sin(k * x + phi)
         else:
-            return A * np.sin(k * x + phi)
+            # if x has both space and time
+            if len(x.shape) > 1 and x.shape[1] > 1:
+                x = x[:, 0:1]  # extract x coord
+            values = A * np.sin(k * x + phi)
+            return np.asarray(values).reshape(-1)
 
 
     def exact_solution(self, x, t) -> np.ndarray:
