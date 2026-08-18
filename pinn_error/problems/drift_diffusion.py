@@ -209,10 +209,11 @@ class DriftDiffusion(BaseProblem):
             return A * torch.sin(k * x + phi)
         else:
             # if x has both space and time
+            is_grid = x.ndim == 1  # 1D spatial grid (FDM); else (N, dim) points
             if len(x.shape) > 1 and x.shape[1] > 1:
                 x = x[:, 0:1]  # extract x coord
             values = A * np.sin(k * x + phi)
-            return np.asarray(values).reshape(-1)
+            return values.reshape(-1) if is_grid else values.reshape(-1, 1)
 
 
     def exact_solution(self, x, t) -> np.ndarray:
