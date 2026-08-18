@@ -71,8 +71,36 @@ class ProblemDomain:
 class BaseProblem(ABC):
     """Abstract base class for defining a PINN problem"""
 
+    # Whether the PDE is second order in time (e.g. the wave equation). Such
+    # problems need TWO initial conditions to be well posed: the value
+    # u(x,0) AND the velocity du/dt(x,0). Subclasses that are second order in
+    # time must set this to True and implement `initial_velocity`, so that
+    # soft-constrained training adds a loss term for the velocity IC and the
+    # FDM error integration accounts for the initial error velocity.
+    is_second_order_in_time: bool = False
+
     def __init__(self, domain: ProblemDomain):
         self.domain = domain
+
+    def initial_velocity(
+        self, x: torch.Tensor | np.ndarray
+    ) -> torch.Tensor | np.ndarray:
+        """Returns the initial velocity du/dt(x,0) for second-order-in-time PDEs.
+
+        Not abstract: only meaningful when `is_second_order_in_time` is True
+        (first-order-in-time problems like the heat equation are fully
+        determined by u(x,0) alone).
+
+        Args:
+            x: Spatial coordinates tensor or array
+
+        Returns:
+            Tensor or array of initial velocity values
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement initial_velocity() "
+            "(only needed when is_second_order_in_time is True)."
+        )
 
     @abstractmethod
     def pde(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
@@ -140,7 +168,6 @@ class BaseProblem(ABC):
         """
         pass
 
-    
     def output_transform_bc_only(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """Applies output transformation for hard constraints on boundary conditions only
 

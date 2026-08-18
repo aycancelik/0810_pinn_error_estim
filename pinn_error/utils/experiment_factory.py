@@ -54,7 +54,7 @@ _TIME_INDEPENDENT_PROBLEMS = ("poisson_1d", "poisson_2d")
 
 # problems whose FDM solver currently supports soft IC/BC error estimation
 # (i.e. has hard_constrain_initial/hard_constrain_boundary wired up)
-_SOFT_CONSTRAINT_SUPPORTED = ("heat", "wave", "drift_diffusion")
+_SOFT_CONSTRAINT_SUPPORTED = ("heat", "wave", "drift_diffusion", "poisson_2d")
 
 
 def _derive_hc_flags(problem_name: str, constraint_mode: str) -> dict:

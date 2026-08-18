@@ -110,10 +110,13 @@ class Heat1DProblemSineIC(BaseProblem):
             return torch.sin(n * torch.pi * x / L)
         else:
             # if x has both space and time
-            if len(x.shape) > 1 and x.shape[1] > 1:
+            is_grid = x.ndim == 1  # 1D spatial grid (FDM); else (N, dim) points
+            if x.ndim > 1 and x.shape[1] > 1:
                 x = x[:, 0:1]  # extract x coord
-            values = np.sin(n * np.pi * x / L)
-            return np.asarray(values).reshape(-1)
+            values = np.asarray(np.sin(n * np.pi * x / L))
+            # deepxde's IC subtracts this from outputs of shape (N, 1); a flat
+            # (N,) array would broadcast into an (N, N) pairwise error instead.
+            return values.reshape(-1) if is_grid else values.reshape(-1, 1)
 
 
     def exact_solution(self, x, t) -> np.ndarray:

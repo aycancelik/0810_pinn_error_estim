@@ -37,9 +37,9 @@ class PINNConfig:
     num_domain: int = 100
     # num points to eval loss (residual) during train
     num_test: int = 1000
-
-    num_initial: int = 100  # num points to train initial condition
-    num_boundary: int = 100  # num points to train boundary condition
+    
+    num_initial: int = 100 # num points to train initial condition
+    num_boundary: int = 100 # num points to train boundary condition
 
     # constraint mode: how IC/BC are enforced during training
     #   "hard"      -> both IC and BC hard-constrained via output_transform (baseline)
@@ -58,8 +58,9 @@ class PINNConfig:
     seed: Optional[int] = None
 
     # model caching
-    use_cache: bool = False  # If True, load cached model if available --for soft constraints we set it to false
+    use_cache: bool = False  # If True, load cached model if available --for soft constraints we set it to false 
     cache_dir: Optional[str] = None  # Override default model_zoo directory
+
 
 
 class PINNTrainer:
@@ -139,45 +140,74 @@ class PINNTrainer:
         )
 
         if mode == "hard":
-            transform = self.problem.output_transform  # IC + BC hard-constrained
+            # both IC and BC hard-constrained
+            transform = self.problem.output_transform
         elif mode == "soft_ic":
-            transform = (
-                self.problem.output_transform_bc_only
-            )  # BC hard-constrained only
+            # BC hard-constrained, IC learned via soft loss
+            transform = self.problem.output_transform_bc_only
         else:  # soft_full
+            # no hard constraints at all; identity output transform
             transform = lambda x, u: u
         self.network.apply_output_transform(transform)
 
-        needs_soft_bc = mode == "soft_full"  # BC baked in for "hard" and "soft_ic"
-        needs_soft_ic = mode != "hard"  # IC baked in only for "hard"
+        # BC needs a soft loss term only when it isn't hard-constrained
+        # structurally (i.e. only in "soft_full" mode -- "hard" and "soft_ic"
+        # both bake BC into the network via output_transform above)
+        needs_soft_bc = mode == "soft_full"
 
-        soft_bc = dde.icbc.DirichletBC(
-            self.geom, self._bc_target, lambda _, on_boundary: on_boundary
+        # Second-order-in-time PDEs (wave) need the velocity IC du/dt(x,0)
+        # supervised too. Under "hard" the output transform's t**2 factor
+        # enforces it structurally; under soft_ic/soft_full nothing does, so
+        # without this term the problem is under-determined at t=0 and the
+        # network is free to start with an arbitrary initial velocity.
+        needs_soft_velocity_ic = mode in ("soft_ic", "soft_full") and getattr(
+            self.problem, "is_second_order_in_time", False
         )
 
         if is_time_dependent:
-            ic_bcs = []
-            if needs_soft_ic:
+            ic_bcs = [
+                dde.icbc.IC(self.geom, self.problem.initial_condition, lambda _, on_initial: on_initial)
+            ]
+            if needs_soft_bc:
                 ic_bcs.append(
-                    dde.icbc.IC(
-                        self.geom,
-                        self.problem.initial_condition,
-                        lambda _, on_initial: on_initial,
+                    dde.icbc.DirichletBC(self.geom, self._bc_target, lambda _, on_boundary: on_boundary)
+                )
+            if needs_soft_velocity_ic:
+                # NOTE: dde.icbc.OperatorBC can't be used here -- for a
+                # GeometryXTime it filters via geom.on_boundary(), which
+                # inspects only the SPATIAL columns and therefore selects the
+                # spatial boundary at all times rather than t=0. So we supply
+                # explicit t=0 points via PointSetOperatorBC instead.
+                X_initial = self.geom.random_initial_points(
+                    self.config.num_initial, random="Hammersley"
+                )
+                v_initial = self.problem.initial_velocity(X_initial)
+                # index of the time column (x columns are spatial, then t)
+                t_idx = self.problem.domain.spatial_dim
+                ic_bcs.append(
+                    dde.icbc.PointSetOperatorBC(
+                        X_initial,
+                        v_initial,
+                        lambda inputs, outputs, X, _j=t_idx: dde.grad.jacobian(
+                            outputs, inputs, i=0, j=_j
+                        ),
                     )
                 )
-            if needs_soft_bc:
-                ic_bcs.append(soft_bc)
             data = dde.data.TimePDE(
                 geometryxtime=self.geom,
                 pde=self.problem.pde,
                 ic_bcs=ic_bcs,
                 num_domain=self.config.num_domain,
                 num_test=self.config.num_test,
-                num_initial=self.config.num_initial if needs_soft_ic else 0,
-                num_boundary=self.config.num_boundary if needs_soft_bc else 0,
+                num_initial=self.config.num_initial,
+                num_boundary=self.config.num_boundary,
             )
         else:
-            bcs = [soft_bc] if needs_soft_bc else []
+            bcs = []
+            if needs_soft_bc:
+                bcs.append(
+                    dde.icbc.DirichletBC(self.geom, self._bc_target, lambda _, on_boundary: on_boundary)
+                )
             data = dde.data.PDE(
                 geometry=self.geom,
                 pde=self.problem.pde,
@@ -250,7 +280,6 @@ class PINNTrainer:
                 "num_domain": self.config.num_domain,
                 "num_test": self.config.num_test,
                 "seed": self.config.seed,
-                "constraint_mode": self.config.constraint_mode,
             },
             "problem": {
                 "class": self.problem.__class__.__name__,
@@ -334,7 +363,10 @@ class PINNTrainer:
         """
         return self.model.predict(X)
 
-    def residual(self, X: np.ndarray | torch.Tensor) -> np.ndarray | torch.Tensor:
+    def residual(
+            self, 
+            X: np.ndarray | torch.Tensor
+        ) -> np.ndarray | torch.Tensor:
         """Computes the PDE residual at given points
 
         Args:
@@ -353,6 +385,34 @@ class PINNTrainer:
             out = self.network(X)
             residual = self.problem.pde(X, out)
         return residual
+
+    def time_derivative(
+            self,
+            X: np.ndarray | torch.Tensor
+        ) -> np.ndarray | torch.Tensor:
+        """Computes du/dt of the PINN prediction at given points.
+
+        Needed for second-order-in-time problems (wave), where the FDM error
+        integration's first step depends on the initial error velocity
+        de/dt(x,0) = u_t(x,0) - u_hat_t(x,0).
+
+        Args:
+            X: Input data points, shape (N, dim) with the time column last
+
+        Returns:
+            du/dt values at the input points
+        """
+        # index of the time column (x columns are spatial, then t)
+        t_idx = self.problem.domain.spatial_dim
+
+        def _dudt(x, u):
+            return dde.grad.jacobian(u, x, i=0, j=t_idx)
+
+        if isinstance(X, np.ndarray):
+            return self.model.predict(X, operator=_dudt)
+        else:
+            out = self.network(X)
+            return _dudt(X, out)
 
     @property
     def run_time(self) -> float:

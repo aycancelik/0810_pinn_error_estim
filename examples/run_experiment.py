@@ -9,11 +9,9 @@ Supports:
 - poisson_2d: 2D Poisson equation
 
 Usage:
-    python run_experiment.py --problem heat --constraint_mode {hard, soft_ic, soft_full} --n_iterations 1000 --nx 32 --nt 32
-    python run_experiment.py --problem poisson_1d --constraint_mode {hard, soft_ic, soft_full} --n_iterations 1000 --nx 32
-    python run_experiment.py --problem poisson_2d --constraint_mode {hard, soft_ic, soft_full} --n_iterations 1000 --nx 16 --ny 16
-
-*Please note that the default constraint mode is 'hard'.  
+    python run_experiment.py --problem heat --n_iterations 1000 --nx 32 --nt 32
+    python run_experiment.py --problem poisson_1d --n_iterations 1000 --nx 32
+    python run_experiment.py --problem poisson_2d --n_iterations 1000 --nx 16 --ny 16
 """
 
 import argparse
@@ -240,7 +238,7 @@ def parse_args():
     parser.add_argument(
         "--constraint_mode",
         type=str,
-        choices=["hard", "soft_ic", "soft"],
+        choices=["hard", "soft_ic", "soft_full"],
         default="hard",
         help=(
             "How IC/BC are enforced: 'hard' constrains both IC and BC via the "
@@ -248,9 +246,8 @@ def parse_args():
             "BC only and learns IC via a soft loss term (not valid for "
             "time-independent problems like poisson_1d/poisson_2d, which have "
             "no IC); 'soft_full' learns both IC and BC via soft loss terms. "
-            "Currently only 'heat' and 'poisson_1d' support soft modes end-to-"
-            "end (FDM error estimation for the others still assumes hard "
-            "IC/BC)."
+            "All five problems (heat, wave, drift_diffusion, poisson_1d, "
+            "poisson_2d) support soft modes end-to-end now."
         ),
     )
 

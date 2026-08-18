@@ -273,6 +273,7 @@ class FDMSolverPoisson2D:
         problem: Poisson2D,
         domain: ProblemDomain,
         pinn_model: PINNTrainer,
+        hard_constrain_boundary: bool = True,
     ):
         """Initialize the 2D FDM solver for Poisson equation.
 
@@ -280,16 +281,24 @@ class FDMSolverPoisson2D:
             L @ u = f   (solving for u)
             L @ e = -R  (error estimation)
 
+        Note: Poisson is time-independent, so there's no initial condition
+        here -- BC (on all 4 edges) is the only constraint.
+
         Args:
             nx (int): Number of spatial grid points in x.
             ny (int): Number of spatial grid points in y.
             problem (Poisson2D): The problem definition.
             domain (ProblemDomain): The problem domain.
             pinn_model (PINNTrainer): The trained PINN model.
+            hard_constrain_boundary (bool, optional): Whether BC is
+                    hard-constrained in the PINN. If False (constraint_mode=
+                    "soft_full"), the actual boundary error is computed
+                    directly instead of assumed to be zero. Defaults to True.
         """
         self.problem = problem
         self.domain = domain
         self.pinn_model = pinn_model
+        self.hard_constrain_boundary = hard_constrain_boundary
 
         self.nx = nx
         self.ny = ny
@@ -374,10 +383,23 @@ class FDMSolverPoisson2D:
         R[-1, :] = 0  # y = y_max
         R[:, 0] = 0  # x = x_min
         R[:, -1] = 0  # x = x_max
-        R = R.ravel()
 
-        # Solve L @ e_int = -R (flattened)
-        e_int = spsolve(self.L, -R)
+        b = -R  # keep 2D shape for boundary indexing below
+        if not self.hard_constrain_boundary:
+            # boundary error is known/prescribed data (exact_solution - PINN
+            # prediction), not something that needs residual integration --
+            # same convention as FDMSolverPoisson1D/FDMSolverHeatEq
+            u_exact = self.problem.exact_solution(X_int, Y_int)
+            u_pinn = self.pinn_model.predict(points).flatten().reshape(self.ny, self.nx)
+            boundary_error = u_exact - u_pinn
+            b[0, :] = boundary_error[0, :]  # y = y_min
+            b[-1, :] = boundary_error[-1, :]  # y = y_max
+            b[:, 0] = boundary_error[:, 0]  # x = x_min
+            b[:, -1] = boundary_error[:, -1]  # x = x_max
+        b = b.ravel()
+
+        # Solve L @ e_int = b (flattened)
+        e_int = spsolve(self.L, b)
 
         # Reshape to full grid
         e = np.zeros((self.ny, self.nx))
@@ -505,7 +527,9 @@ class FDMSolverHeatEq:
         # Initialize solution (full grid)
         u = np.zeros((self.nt, self.nx))
         # Set u^0 = initial condition
-        u[0, :] = self.problem.initial_condition(self.x)
+        # np.ravel: initial_condition may return (nx,) or (nx, 1) depending on
+        # the problem class; u[0, :] has shape (nx,) and rejects a column vector
+        u[0, :] = np.ravel(self.problem.initial_condition(self.x))
 
         # Time stepping, n+1 from n
         for n in range(self.nt - 1):
@@ -530,7 +554,13 @@ class FDMSolverHeatEq:
             # potentially less stable but accounts for any numerical issues at t0
             # (also covers the boundary entries when BC is soft: at t=0 they're
             # just the same pointwise error formula evaluated at x=x_min/x_max)
-            e[0, :] = self.problem.initial_condition(self.x) - self.pinn_model.predict(
+            # np.ravel: initial_condition may return (nx,) or (nx, 1) depending
+            # on the problem class. Without it, an (nx, 1) IC minus an (nx,)
+            # prediction broadcasts to an (nx, nx) matrix -- which then fails
+            # loudly here, but would be a silent bug in a mean/norm context.
+            e[0, :] = np.ravel(
+                self.problem.initial_condition(self.x)
+            ) - self.pinn_model.predict(
                 np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
             ).flatten()
 
@@ -609,13 +639,12 @@ class FDMSolverDriftDiffusion:
         problem: DriftDiffusion,
         domain: ProblemDomain,
         pinn_model: PINNTrainer,
-        hard_constrain_initial: bool = False,
+        hard_constrain_initial: bool = True,
         hard_constrain_boundary: bool = True,
-
     ):
         """Initialize the FDM solver for the 1D Drift-Diffusion equation.
 
-        PDE: u_t = diffusivity * u_xx - velocity_x * u_x 
+        PDE: u_t = diffusivity * u_xx - velocity_x * u_x
 
         Uses Crank-Nicolson time stepping (see Section 3.2)
             (I - 0.5*dt*L) @ u^{n+1} = (I + 0.5*dt*L) @ u^n
@@ -626,11 +655,15 @@ class FDMSolverDriftDiffusion:
             problem (DriftDiffusion): The problem definition.
             domain (ProblemDomain): The problem domain.
             pinn_model (PINNTrainer): The trained PINN model.
-            hard_constrain_initial (bool, optional): Whether to hard-constrain 
-                    initial condition in error integration. Defaults to True.
-                    Note that even with hard constraints we encounter some 
-                    numerical error at t=0, hence there is a non-zero 
+            hard_constrain_initial (bool, optional): Whether IC is hard-constrained
+                    in the PINN (i.e. constraint_mode="hard"). If False, the actual
+                    pointwise error at t=0 is computed instead of assuming it's zero.
+                    Note that even with hard constraints we encounter some
+                    numerical error at t=0, hence there is a non-zero
                     (but very close to zero) initial error step.
+            hard_constrain_boundary (bool, optional): Whether BC is hard-constrained
+                    in the PINN. If False, the actual boundary error is computed at
+                    every time step instead of assuming it's zero. Defaults to True.
         """
         self.problem = problem
         self.domain = domain
@@ -746,7 +779,9 @@ class FDMSolverDriftDiffusion:
         u = np.zeros((self.nt, self.nx))
 
         # Set initial condition
-        u[0, :] = self.problem.initial_condition(self.x)
+        # np.ravel: initial_condition may return (nx,) or (nx, 1) depending on
+        # the problem class; u[0, :] has shape (nx,) and rejects a column vector
+        u[0, :] = np.ravel(self.problem.initial_condition(self.x))
 
         # Time stepping
         for n in range(self.nt - 1):
@@ -768,24 +803,30 @@ class FDMSolverDriftDiffusion:
 
     def residual_integration(self):
         """Integrate PINN residuals to estimate error.
- 
+
         Returns:
             np.ndarray: Error estimate array with shape (nt, nx).
         """
         self._build_matrices()
- 
+
         start_time = time.time()
- 
+
         # Initialize error
         e = np.zeros((self.nt, self.nx))
         if not (self.hard_constrain_initial and self.hard_constrain_boundary):
             # potentially less stable but accounts for any numerical issues at t0
             # (also covers the boundary entries when BC is soft: at t=0 they're
             # just the same pointwise error formula evaluated at x=x_min/x_max)
-            e[0, :] = self.problem.initial_condition(self.x) - self.pinn_model.predict(
+            # np.ravel: initial_condition may return (nx,) or (nx, 1) depending
+            # on the problem class. Without it, an (nx, 1) IC minus an (nx,)
+            # prediction broadcasts to an (nx, nx) matrix -- which then fails
+            # loudly here, but would be a silent bug in a mean/norm context.
+            e[0, :] = np.ravel(
+                self.problem.initial_condition(self.x)
+            ) - self.pinn_model.predict(
                 np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
             ).flatten()
- 
+
         def _get_boundary_error(t: float) -> np.ndarray:
             """Actual pointwise error at x_min/x_max at a given time. This is
             known/prescribed data (see _get_boundary_values above, which does
@@ -796,33 +837,33 @@ class FDMSolverDriftDiffusion:
             u_exact = self.problem.exact_solution(x_bd, t_bd)
             u_pinn = self.pinn_model.predict(np.column_stack([x_bd, t_bd])).flatten()
             return u_exact - u_pinn
- 
+
         # Get residual at initial time
         R_curr = self.pinn_model.residual(
             np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
         ).flatten()
         R_curr[0] = 0.0  # BC points
         R_curr[-1] = 0.0
- 
+
         # Time stepping
         for n in range(self.nt - 1):
             t_next = self.t[n + 1]
- 
+
             # RHS from previous step
             rhs = self.M_rhs @ e[n]
- 
+
             # Compute residual at next time step
             R_next = self.pinn_model.residual(
                 np.column_stack([self.x, t_next * np.ones_like(self.x)])
             ).flatten()
             R_next[0] = 0.0  # BC points
             R_next[-1] = 0.0
- 
+
             residual_source = - 0.5 * self.dt * (
                 R_curr + R_next
             )
             rhs += residual_source
- 
+
             # M_lhs/M_rhs bake in identity/zero boundary rows unconditionally
             # (see _build_matrices), so rhs[0]/rhs[-1] are already ~0 at this
             # point regardless of hard_constrain_boundary. If BC is hard-
@@ -834,12 +875,12 @@ class FDMSolverDriftDiffusion:
                 rhs[-1] = 0.0
             else:
                 rhs[[0, -1]] = _get_boundary_error(t_next)
- 
+
             # Solve for next error step
             e[n + 1] = spsolve(self.M_lhs, rhs)
- 
+
             R_curr = R_next  # Store for next iteration
- 
+
         self._run_time = time.time() - start_time
         return e
 
@@ -935,7 +976,9 @@ class FDMSolverWave1D:
         # Initialize solution array (full grid)
         u = np.zeros((self.nt, self.nx))
         # Set initial condition u(x,0) = f(x)
-        u[0, :] = self.problem.initial_condition(self.x)
+        # np.ravel: initial_condition may return (nx,) or (nx, 1) depending on
+        # the problem class; u[0, :] has shape (nx,) and rejects a column vector
+        u[0, :] = np.ravel(self.problem.initial_condition(self.x))
 
         # First step: Neumann IC du/dt(x,0) = 0 implies u^{-1} = u^1.
         # Substituting into the central-difference stencil at n=0:
@@ -962,13 +1005,22 @@ class FDMSolverWave1D:
         self._build_spatial_operator()
 
         e = np.zeros((self.nt, self.nx))
-        if not (self.hard_constrain_initial and self.hard_constrain_boundary):  
+        if not (self.hard_constrain_initial and self.hard_constrain_boundary):
             # potentially less stable but accounts for any numerical issues at t0
-            e[0, :] = self.problem.initial_condition(self.x) - self.pinn_model.predict(
+            # (also covers the boundary entries when BC is soft: at t=0 they're
+            # just the same pointwise error formula evaluated at x=x_min/x_max)
+            # np.ravel: initial_condition may return (nx,) or (nx, 1) depending
+            # on the problem class. Without it, an (nx, 1) IC minus an (nx,)
+            # prediction broadcasts to an (nx, nx) matrix -- which then fails
+            # loudly here, but would be a silent bug in a mean/norm context.
+            e[0, :] = np.ravel(
+                self.problem.initial_condition(self.x)
+            ) - self.pinn_model.predict(
                 np.column_stack([self.x, self.t[0] * np.ones_like(self.x)])
             ).flatten()
 
         start_time = time.time()
+
         x_int = self.x
 
         def _boundary_error(t_val: float) -> np.ndarray:
@@ -981,17 +1033,7 @@ class FDMSolverWave1D:
             return self.problem.exact_solution(x_bd, t_bd) - self.pinn_model.predict(
                 np.column_stack([x_bd, t_bd])
             ).flatten()
- 
-        # First step: de/dt(x,0) = 0 implies e^{-1} = e^1.
-        # With e^0 = 0 this simplifies to:
-        #   e^1 = -0.5 * dt^2 * R^0
-        # (or more generally: e^1 = e^0 + 0.5*dt^2*(L@e^0 - R^0))
-        # NOTE: this still assumes the PINN's initial velocity du/dt(x,0)
-        # matches the true velocity IC (both taken as 0). That's only
-        # guaranteed under constraint_mode="hard" (output_transform's `_t**2`
-        # factor enforces it structurally); under soft_ic/soft_full nothing
-        # currently supervises the velocity IC, so there's an unaccounted
-        # error contribution from that mismatch in this first step.
+
         R_0 = self.pinn_model.residual(
             np.column_stack([x_int, self.t[0] * np.ones_like(x_int)])
         ).flatten()
@@ -1000,13 +1042,41 @@ class FDMSolverWave1D:
         # injection, not via residual integration.
         R_0[0] = 0.0
         R_0[-1] = 0.0
-        e[1] = e[0] + 0.5 * self.dt**2 * (self.spatial_operator @ e[0] - R_0)
+
+        # Initial error velocity: de/dt(x,0) = u_t(x,0) - u_hat_t(x,0).
+        # The wave equation is second order in time, so the error evolution is
+        # only determined once BOTH e(x,0) and de/dt(x,0) are known.
+        # Under constraint_mode="hard" the output transform's `_t**2` factor
+        # forces u_hat_t(x,0) = 0, matching the true velocity IC, so this term
+        # vanishes -- kept gated on the flag so hard-mode results are
+        # bit-for-bit unchanged. Under soft_ic/soft_full the network's initial
+        # velocity is only softly supervised (see PINNTrainer._init_model's
+        # PointSetOperatorBC term), so the residual mismatch must be measured.
+        if self.hard_constrain_initial:
+            e_t0 = np.zeros(self.nx)
+        else:
+            X_0 = np.column_stack([x_int, self.t[0] * np.ones_like(x_int)])
+            v_true = np.ravel(self.problem.initial_velocity(x_int))
+            v_pinn = self.pinn_model.time_derivative(X_0).flatten()
+            e_t0 = v_true - v_pinn
+
+        # First step, allowing a nonzero initial error velocity v0 = de/dt(x,0):
+        #   central diff:    (e^1 - e^{-1}) / (2*dt) = v0
+        #                    => e^{-1} = e^1 - 2*dt*v0
+        #   stencil at n=0:  (e^1 - 2*e^0 + e^{-1}) / dt^2 = L@e^0 - R^0
+        #   =>               e^1 = e^0 + dt*v0 + 0.5*dt^2*(L@e^0 - R^0)
+        # With v0 = 0 this reduces to the usual e^1 = e^0 + 0.5*dt^2*(L@e^0 - R^0).
+        e[1] = (
+            e[0]
+            + self.dt * e_t0
+            + 0.5 * self.dt**2 * (self.spatial_operator @ e[0] - R_0)
+        )
         if self.hard_constrain_boundary:
             e[1, 0] = 0.0  # error at x=0
             e[1, -1] = 0.0  # error at x=L
         else:
             e[1, [0, -1]] = _boundary_error(self.t[1])
- 
+
         for n in range(1, self.nt - 1):
             R_n = self.pinn_model.residual(
                 np.column_stack([x_int, self.t[n] * np.ones_like(x_int)])
@@ -1019,10 +1089,9 @@ class FDMSolverWave1D:
                 e[n + 1, -1] = 0.0  # error at x=L
             else:
                 e[n + 1, [0, -1]] = _boundary_error(self.t[n + 1])
- 
+
         self._run_time = time.time() - start_time
         return e
-
 
     @property
     def run_time(self) -> float:
