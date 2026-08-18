@@ -58,7 +58,7 @@ class PINNConfig:
     seed: Optional[int] = None
 
     # model caching
-    use_cache: bool = False  # If True, load cached model if available --for soft constraints we set it to false 
+    use_cache: bool = True  # If True, load cached model if available --for soft constraints we set it to false 
     cache_dir: Optional[str] = None  # Override default model_zoo directory
 
 
@@ -241,6 +241,9 @@ class PINNTrainer:
             "num_domain": self.config.num_domain,
             "num_test": self.config.num_test,
             "seed": self.config.seed,
+            "constraint_mode": self.config.constraint_mode,
+            "num_initial": self.config.num_initial,
+            "num_boundary": self.config.num_boundary,
         }
 
         # Problem parameters
