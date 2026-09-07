@@ -1,36 +1,37 @@
 """
 Unified experiment runner for all problem types.
-
+ 
 Supports:
 - heat: 1D Heat equation
 - wave: 1D Wave equation
 - drift_diffusion: 1D Drift-Diffusion equation
 - poisson_1d: 1D Poisson equation
 - poisson_2d: 2D Poisson equation
-
+ 
 Usage:
     python run_experiment.py --problem heat --n_iterations 1000 --nx 32 --nt 32
     python run_experiment.py --problem poisson_1d --n_iterations 1000 --nx 32
     python run_experiment.py --problem poisson_2d --n_iterations 1000 --nx 16 --ny 16
 """
-
+ 
 import argparse
-
+ 
 import deepxde as dde
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import seaborn as sns
 import numpy as np 
-
+ 
 from pinn_error.core.pinn import PINNConfig
 from pinn_error.core.error_bounds import PINNErrorBoundEstimator
 from pinn_error.utils.experiment_factory import ExperimentFactory
-from pinn_error.utils.plotting import (plot_experiment_results,
+from pinn_error.utils.plotting import (plot_error_bound_comparison,
+                                       plot_experiment_results,
                                        print_error_metrics)
 from pinn_error.utils.setup import set_default_device
-
-
+ 
+ 
 # font setup 
 try: 
     fm.fontManager.addfont('/Users/krasowski/Library/Fonts/LibertinusSerif-Regular.ttf')
@@ -44,17 +45,17 @@ try:
     mpl.rcParams['font.serif'] = ['Libertinus Serif']
 except Exception as e:
     print(f"Warning: Could not load custom font. Using default. Error: {e}")
-
+ 
 sns.set_context('paper', font_scale=2)
-
+ 
 dde.config.set_default_float("float64")
-
+ 
 set_default_device("cpu")
-
-
+ 
+ 
 def main(args):
     """Run experiment with given arguments."""
-
+ 
     # Pass all problem kwargs - factory will handle filtering
     problem_kwargs = {
         "x_min": args.x_min,
@@ -68,14 +69,14 @@ def main(args):
         "propagation_speed": args.propagation_speed,
         "frequency": args.frequency,
     }
-
+ 
     # Pass all FDM kwargs
     fdm_solver_kwargs = {
         "nx": args.nx,
         "nt": args.nt,
         "ny": args.ny,
     }
-
+ 
     print("=" * 60)
     print(f"RUNNING EXPERIMENT: {args.problem.upper()}")
     print("=" * 60)
@@ -84,10 +85,10 @@ def main(args):
     print(f"PINN iterations: {args.n_iterations}")
     print(f"Seed: {args.seed}")
     print("-" * 60)
-
+ 
     if args.problem == "poisson_1d":
         args.layers[0] = 1
-
+ 
     # Create experiment factory
     experiment = ExperimentFactory(
         problem_name=args.problem,
@@ -102,17 +103,19 @@ def main(args):
         ),
         verbose=True,
     )
-
+ 
     # Run experiment
     results = experiment.run_experiment()
-
+ 
     # Print error metrics
     print_error_metrics(results)
-
+ 
     # Plot results
-    save_path = f"{args.problem}_results.png"
+    # constraint_mode in the filename so hard/soft_ic/soft_full runs of the
+    # same problem don't overwrite each other
+    save_path = f"{args.problem}_{args.constraint_mode}_results.png"
     plot_experiment_results(results, save_path=save_path, show=not args.no_show)
-
+ 
     if args.problem == 'heat' and not args.skip_bound_estimation:
         # Compute error bound estimate for heat equation
         bound_estimator = PINNErrorBoundEstimator(
@@ -123,63 +126,30 @@ def main(args):
             use_trapezoid_norm=True
         )
         bound_results = bound_estimator.compute(t_eval = results['t'])
-
+ 
         print(f"Error bound run time: {bound_estimator.run_time:.2f} seconds")
-
+ 
         results.update(bound_results)
         print(f"Number of subintervals used for integration:")
         for t, n in zip(results['t'], results['n_sp']):
             print(f"t={t:.3f}: n_subintervals={n}")
-
-        e_true = np.zeros_like(results['t'])
-        fdm_estimated_error = np.zeros_like(results['t'])
-        fdm_error = np.zeros_like(results['t'])
-
-        for i, t in enumerate(results['t']):
-            e_true[i] = bound_estimator._compute_spatial_l2_norm(results['e_true'][i])[0]
-            fdm_estimated_error[i] = bound_estimator._compute_spatial_l2_norm(results['e_res'][i])[0]
-            fdm_error[i] = bound_estimator._compute_spatial_l2_norm(results['u_fdm'][i].flatten() - results['u_pinn'][i].flatten())[0]
-
-        fig, ax = plt.subplots(figsize=(9, 6))
-        ax.plot(results['t'], e_true, label=f'$e_{{\\mathrm{{true}}}}$', color='#4daf4a', lw=2.0, alpha=0.5)
-        ax.plot(results['t'], fdm_estimated_error, label=f'$e_{{\\mathrm{{res}}}}$', color='#377eb8', linestyle='--', lw=1.5)
-        ax.plot(results['t'], fdm_error, label=f'$e_{{\\mathrm{{FDM}}}}$', color='#ff7f00', linestyle='-', lw=1.5)
-        ax.plot(results['t'], results['epsilon'], label=f'$e_{{\\mathrm{{HU}}}}$', color='#f781bf', linestyle='-.', lw=1.5)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('$L_2$ Error')
-        ax.set_yscale('log')
-        ax.set_ylim(bottom=1e-6)
-        ax.grid(True, alpha=0.3)
-
-
-        metrics_text = (
-            "\\begin{tabular}{lr}"
-            "\\multicolumn{2}{l}{Computation time.}\\\\"
-            f"PINN training & {results['pinn_time']:.3f} s\\\\"
-            f"$e_{{\\mathrm{{res}}}}$ & {results['e_res_time']:.3f} s\\\\"
-            f"$e_{{\\mathrm{{FDM}}}}$ & {results['e_fdm_time']:.3f} s\\\\"
-            f"$e_{{\\mathrm{{bound}}}}$ & {bound_estimator.run_time:.3f} s\\\\"
-            "\\end{tabular}"
+ 
+        plot_error_bound_comparison(
+            results,
+            bound_estimator=bound_estimator,
+            constraint_mode=args.constraint_mode,
+            show=not args.no_show,
         )
-
-        ax.text(0.55, 0.05, metrics_text, verticalalignment='bottom', horizontalalignment='left', 
-                transform=ax.transAxes, bbox=dict(edgecolor='black', alpha=0.8, facecolor='white'))
-
-        plt.savefig("./figures/heat_eq_err_comparison_time.pdf", bbox_inches='tight')
-        ax.legend()
-        ax.set_title('Error Comparison for 1D Heat Equation')
-        plt.show()
-
-
+ 
     return results
-
-
+ 
+ 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Run PINN experiment with FDM error estimation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
+ 
     # Problem selection
     parser.add_argument(
         "--problem",
@@ -188,7 +158,7 @@ def parse_args():
         required=True,
         help="The problem to solve.",
     )
-
+ 
     # FDM grid parameters
     parser.add_argument(
         "--nx",
@@ -208,7 +178,7 @@ def parse_args():
         default=64,
         help="Number of spatial grid points in y direction (2D problems).",
     )
-
+ 
     # PINN parameters
     parser.add_argument(
         "--n_iterations",
@@ -250,7 +220,7 @@ def parse_args():
             "poisson_2d) support soft modes end-to-end now."
         ),
     )
-
+ 
     # Problem-specific parameters
     parser.add_argument(
         "--frequency",
@@ -282,7 +252,7 @@ def parse_args():
         default=0.0,
         help="Phase shift for Drift-Diffusion equation IC.",
     )
-
+ 
     # Domain parameters
     parser.add_argument("--x_min", type=float, default=0.0, help="Minimum x value.")
     parser.add_argument("--x_max", type=float, default=1.0, help="Maximum x value.")
@@ -293,7 +263,7 @@ def parse_args():
     parser.add_argument(
         "--y_max", type=float, default=1.0, help="Maximum y value (2D)."
     )
-
+ 
     # Output options
     parser.add_argument(
         "--no_show",
@@ -305,10 +275,10 @@ def parse_args():
         action="store_true",
         help="Skip error bound estimation step (only for heat equation).",
     )
-
+ 
     return parser.parse_args()
-
-
+ 
+ 
 if __name__ == "__main__":
     args = parse_args()
     main(args)
