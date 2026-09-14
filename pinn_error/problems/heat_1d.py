@@ -119,6 +119,7 @@ class Heat1DProblemSineIC(BaseProblem):
             return values.reshape(-1) if is_grid else values.reshape(-1, 1)
 
 
+
     def exact_solution(self, x, t) -> np.ndarray:
         """Returns the exact solution for given x and t.
 

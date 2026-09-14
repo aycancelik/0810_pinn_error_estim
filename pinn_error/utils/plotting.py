@@ -385,6 +385,7 @@ def plot_error_bound_comparison(
     save_path: Optional[str] = None,
     show: bool = True,
     title: Optional[str] = None,
+    ymin: Optional[float] = 1e-6,
 ) -> plt.Figure:
     """
     Compare error measures over time for the 1D heat equation:
@@ -462,16 +463,21 @@ def plot_error_bound_comparison(
     ax.set_yscale("log")
     ax.grid(True, alpha=0.3)
 
-    # Autoscale the lower limit instead of clamping at a fixed 1e-6: soft
-    # constraints produce visibly larger errors, and a hard floor can push
-    # well-trained hard-constrained curves off the bottom of the axis.
-    finite = np.concatenate([
-        c[np.isfinite(c) & (c > 0)]
-        for c in ([e_true, e_res, e_fdm] +
-                  ([np.asarray(results["epsilon"])] if "epsilon" in results else []))
-    ])
-    if finite.size:
-        ax.set_ylim(bottom=10 ** np.floor(np.log10(finite.min())))
+    # Fixed lower limit by default (1e-6), matching the original inline plot so
+    # hard-constrained figures stay visually comparable with previously
+    # generated ones. Without it the axis autoscales down to the ~1e-16 t=0
+    # error, squashing every curve into the top of the plot. Pass ymin=None to
+    # autoscale instead.
+    if ymin is not None:
+        ax.set_ylim(bottom=ymin)
+    else:
+        finite = np.concatenate([
+            c[np.isfinite(c) & (c > 0)]
+            for c in ([e_true, e_res, e_fdm] +
+                      ([np.asarray(results["epsilon"])] if "epsilon" in results else []))
+        ])
+        if finite.size:
+            ax.set_ylim(bottom=10 ** np.floor(np.log10(finite.min())))
 
     metrics_text = (
         "\\begin{tabular}{lr}"

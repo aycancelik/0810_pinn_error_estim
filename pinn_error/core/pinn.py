@@ -155,6 +155,14 @@ class PINNTrainer:
         # both bake BC into the network via output_transform above)
         needs_soft_bc = mode == "soft_full"
 
+        # IC needs a soft loss term only when it isn't hard-constrained
+        # structurally (i.e. everywhere except "hard" -- "hard" bakes IC into
+        # the network via output_transform above, so a soft IC term there is
+        # not just redundant: it also pulls in num_initial extra collocation
+        # points that would otherwise not exist for "hard", changing what the
+        # PDE residual is trained on).
+        needs_soft_ic = mode != "hard"
+
         # Second-order-in-time PDEs (wave) need the velocity IC du/dt(x,0)
         # supervised too. Under "hard" the output transform's t**2 factor
         # enforces it structurally; under soft_ic/soft_full nothing does, so
@@ -165,9 +173,11 @@ class PINNTrainer:
         )
 
         if is_time_dependent:
-            ic_bcs = [
-                dde.icbc.IC(self.geom, self.problem.initial_condition, lambda _, on_initial: on_initial)
-            ]
+            ic_bcs = []
+            if needs_soft_ic:
+                ic_bcs.append(
+                    dde.icbc.IC(self.geom, self.problem.initial_condition, lambda _, on_initial: on_initial)
+                )
             if needs_soft_bc:
                 ic_bcs.append(
                     dde.icbc.DirichletBC(self.geom, self._bc_target, lambda _, on_boundary: on_boundary)
@@ -199,8 +209,8 @@ class PINNTrainer:
                 ic_bcs=ic_bcs,
                 num_domain=self.config.num_domain,
                 num_test=self.config.num_test,
-                num_initial=self.config.num_initial,
-                num_boundary=self.config.num_boundary,
+                num_initial=self.config.num_initial if needs_soft_ic else 0,
+                num_boundary=self.config.num_boundary if needs_soft_bc else 0,
             )
         else:
             bcs = []
