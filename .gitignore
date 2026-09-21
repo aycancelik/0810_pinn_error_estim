@@ -55,3 +55,6 @@ fastlane/test_output/
 
 # Additionall stuffos si si
 heat_results.png
+__pycache__/
+*.pyc
+.DS_Store
