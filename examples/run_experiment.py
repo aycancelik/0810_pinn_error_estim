@@ -7,6 +7,7 @@ Supports:
 - drift_diffusion: 1D Drift-Diffusion equation
 - poisson_1d: 1D Poisson equation
 - poisson_2d: 2D Poisson equation
+- burgers_1d: 1D Burgers' equation
  
 Usage:
     python run_experiment.py --problem heat --n_iterations 1000 --nx 32 --nt 32
@@ -68,6 +69,7 @@ def main(args):
         "phase_shift": args.phase_shift,
         "propagation_speed": args.propagation_speed,
         "frequency": args.frequency,
+        "viscosity": args.viscosity,
     }
  
     # Pass all FDM kwargs
@@ -154,7 +156,7 @@ def parse_args():
     parser.add_argument(
         "--problem",
         type=str,
-        choices=["heat", "wave", "drift_diffusion", "poisson_1d", "poisson_2d"],
+        choices=["heat", "wave", "drift_diffusion", "poisson_1d", "poisson_2d", "burgers_1d"],
         required=True,
         help="The problem to solve.",
     )
@@ -251,6 +253,12 @@ def parse_args():
         type=float,
         default=0.0,
         help="Phase shift for Drift-Diffusion equation IC.",
+    )
+    parser.add_argument(
+        "--viscosity",
+        type=float,
+        default=0.01,  # / np.pi, # for the benchmark convention we're dividing it by pi
+        help="Viscosity for Burgers' equation.",
     )
  
     # Domain parameters

@@ -11,6 +11,7 @@ from pinn_error.core.problem import BaseProblem, ProblemDomain
 from pinn_error.problems.drift_diffusion import DriftDiffusion
 from pinn_error.problems.poisson import Poisson1D, Poisson2D
 from pinn_error.problems.wave import Wave1D
+from pinn_error.problems.burgers import Burgers1D
 
 
 class FDMMatrixBuilder:
@@ -891,6 +892,7 @@ class FDMSolverDriftDiffusion:
 
 
 class FDMSolverWave1D:
+
     def __init__(
         self,
         nx: int,
@@ -1096,4 +1098,156 @@ class FDMSolverWave1D:
     @property
     def run_time(self) -> float:
         """Returns the FDM solve/error approx. time in seconds"""
+        return self._run_time
+
+
+class FDMSolverBurgers1D:
+    def __init__(
+        self,
+        nx: int,
+        nt: int,
+        problem: Burgers1D,
+        domain: ProblemDomain,
+        pinn_model: PINNTrainer,
+        hard_constrain_initial: bool = True,
+        hard_constrain_boundary: bool = True,
+    ):
+        """Initialize the FDM solver for the 1D Burgers' equation.
+
+        PDE: u_t + u * u_x = ν * u_xx
+
+        Uses Crank-Nicolson time stepping (see Section 3.2)
+            (I - 0.5*dt*L) @ u^{n+1} = (I + 0.5*dt*L) @ u^n
+
+        Args:
+            nx (int): Number of spatial grid points.
+            nt (int): Number of temporal grid points.
+            problem (Burgers1D): The problem definition.
+            domain (ProblemDomain): The problem domain.
+            pinn_model (PINNTrainer): The trained PINN model.
+            hard_constrain_initial (bool, optional): Whether IC is hard-constrained
+                    in the PINN (i.e. constraint_mode="hard"). If False, the actual
+                    pointwise error at t=0 is computed instead of assuming it's zero.
+                    Note that even with hard constraints we encounter some
+                    numerical error at t=0, hence there is a non-zero
+                    (but very close to zero) initial error step.
+            hard_constrain_boundary (bool, optional): Whether BC is hard-constrained
+                    in the PINN. If False, the actual boundary error is computed at
+                    every time step instead of assuming it's zero. Defaults to True.
+        """
+        self.problem = problem
+        self.domain = domain
+        self.pinn_model = pinn_model
+        self.hard_constrain_initial = hard_constrain_initial
+        self.hard_constrain_boundary = hard_constrain_boundary
+        self.nx = nx
+        self.nt = nt
+        # Grid spacing
+        self.dx = (self.domain.spatial_bounds[1] - self.domain.spatial_bounds[0]) / (
+            nx - 1
+        )
+        self.dt = (self.domain.temporal_bounds[1] - self.domain.temporal_bounds[0]) / (
+            nt - 1
+        )
+        # Create grids
+        self.x = np.linspace(
+            self.domain.spatial_bounds[0], self.domain.spatial_bounds[1], nx
+        )
+        self.t = np.linspace(
+            self.domain.temporal_bounds[0], self.domain.temporal_bounds[1], nt
+        )
+        # caching these once -- we'll rebuild the matrices at each time step anyway
+        self._A_xx = FDMMatrixBuilder.get_derivative_matrix_1d(nx, self.dx, order=2)
+        self._A_x  = FDMMatrixBuilder.get_derivative_matrix_1d(nx, self.dx, order=1)
+        self.stability_flag = False  # flag for stability issues
+        self._run_time = 0.0
+
+
+    def _build_matrices(self, velocity: np.ndarray, reaction: np.ndarray = None):
+        """Args:
+            velocity: advection speed (u^n for solve(), û + e^n for the error eq.)
+            reaction: zeroth-order coefficient (û_x for the error eq., None for solve())
+        """
+        L = self.problem.viscosity * self._A_xx - sparse.diags(velocity) @ self._A_x
+        if reaction is not None:
+            L = L - sparse.diags(reaction)
+        I = sparse.eye(self.nx, format="csr")
+        M_lhs = (I - 0.5 * self.dt * L).tolil()
+        M_rhs = (I + 0.5 * self.dt * L).tolil()
+        for i in (0, -1):                      # Dirichlet rows
+            M_lhs[i, :] = 0; M_lhs[i, i] = 1
+            M_rhs[i, :] = 0
+        self.M_lhs, self.M_rhs = M_lhs.tocsr(), M_rhs.tocsr()
+
+
+    def _pinn_u(self, t):
+        return self.pinn_model.predict(
+            np.column_stack([self.x, t * np.ones_like(self.x)])
+                ).flatten()
+
+
+    def solve(self):
+        start_time = time.time()
+        u = np.zeros((self.nt, self.nx))
+        u[0] = np.ravel(self.problem.initial_condition(self.x))
+        for n in range(self.nt - 1):
+            self._build_matrices(velocity=u[n])
+            u[n + 1] = spsolve(self.M_lhs, self.M_rhs @ u[n])
+        self._run_time = time.time() - start_time
+        return u
+
+
+    def _pinn_residual(self, t):
+        R = self.pinn_model.residual(
+            np.column_stack([self.x, t * np.ones_like(self.x)])
+        ).flatten()
+        R[0] = R[-1] = 0.0   # boundary rows are Dirichlet, source unused there
+        return R
+
+
+    def residual_integration(self): 
+        start_time = time.time()
+        e = np.zeros((self.nt, self.nx))
+        if not self.hard_constrain_initial:
+            e[0] = np.ravel(self.problem.initial_condition(self.x)) - self._pinn_u(self.t[0])
+
+        R_curr = self._pinn_residual(self.t[0])      # with R[0]=R[-1]=0
+        u_hat_curr = self._pinn_u(self.t[0])
+
+        for n in range(self.nt - 1):
+            t_next = self.t[n + 1]
+            u_hat_next = self._pinn_u(t_next)
+            R_next = self._pinn_residual(t_next)
+
+            u_hat_mid = 0.5 * (u_hat_curr + u_hat_next)          # CN midpoint
+            self._build_matrices(
+                velocity=u_hat_mid + e[n],                        # (û + e) e_x, e lagged
+                reaction=self._A_x @ u_hat_mid,                   # û_x e
+            )
+
+            rhs = self.M_rhs @ e[n] - 0.5 * self.dt * (R_curr + R_next)
+            if not self.hard_constrain_boundary:
+                rhs[[0, -1]] = self._boundary_error(t_next)
+
+            e[n + 1] = spsolve(self.M_lhs, rhs)
+            R_curr, u_hat_curr = R_next, u_hat_next
+
+        self._run_time = time.time() - start_time
+        return e
+
+
+    def _boundary_error(self, t: float) -> np.ndarray:
+        """Actual pointwise error at x_min/x_max at a given time. This is
+        known/prescribed data (see _get_boundary_values above, which does
+        the same thing for the true solution u), not something that needs
+        residual integration -- used when BC is soft."""
+        x_bd = np.array([self.x[0], self.x[-1]])
+        t_bd = t * np.ones_like(x_bd)
+        u_exact = self.problem.exact_solution(x_bd, t_bd)
+        u_pinn = self.pinn_model.predict(np.column_stack([x_bd, t_bd])).flatten()
+        return u_exact - u_pinn
+
+    @property
+    def run_time(self) -> float:
+        """Returns the FDM solve/error approx. time in seconds."""
         return self._run_time

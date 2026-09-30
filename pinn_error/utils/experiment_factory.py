@@ -3,28 +3,20 @@ import time
 
 from pinn_error.core.fdm import (FDMSolverDriftDiffusion, FDMSolverHeatEq,
                                  FDMSolverPoisson1D, FDMSolverPoisson2D,
-                                 FDMSolverWave1D)
+                                 FDMSolverWave1D, FDMSolverBurgers1D)
 from pinn_error.core.pinn import PINNConfig, PINNTrainer
 from pinn_error.core.problem import BaseProblem, ProblemDomain
 from pinn_error.problems import (DriftDiffusion, Heat1DProblemSineIC,
-                                 Poisson1D, Poisson2D, Wave1D)
+                                 Poisson1D, Poisson2D, Wave1D, Burgers1D)
 
 # Define accepted kwargs for each problem type
 PROBLEM_KWARGS = {
     "heat": ["x_min", "x_max", "t_max", "diffusivity", "frequency"],
     "wave": ["x_min", "x_max", "t_max", "propagation_speed", "frequency"],
-    "drift_diffusion": [
-        "x_min",
-        "x_max",
-        "t_max",
-        "initial_concentration",
-        "frequency",
-        "phase_shift",
-        "diffusivity",
-        "velocity_x",
-    ],
+    "drift_diffusion": ["x_min", "x_max", "t_max", "initial_concentration", "frequency", "phase_shift", "diffusivity","velocity_x",],
     "poisson_1d": ["x_min", "x_max"],
     "poisson_2d": ["x_min", "x_max", "y_min", "y_max"],
+    "burgers_1d": ["x_min", "x_max", "t_max", "viscosity"],
 }
 
 
@@ -46,6 +38,8 @@ def get_problem(problem_name: str, **kwargs):
         return Wave1D(**filtered_kwargs)
     elif problem_name == "drift_diffusion":
         return DriftDiffusion(**filtered_kwargs)
+    elif problem_name == "burgers_1d":
+        return Burgers1D(**filtered_kwargs)
     else:
         raise ValueError(f"Unknown problem name: {problem_name}")
 
@@ -148,6 +142,16 @@ def get_fdm_solver(
         )
     elif problem_name == "drift_diffusion":
         return FDMSolverDriftDiffusion(
+            problem=problem,
+            domain=domain,
+            pinn_model=pinn_model,
+            nx=nx,
+            nt=nt,
+            hard_constrain_initial=hc_flags["hard_constrain_initial"],
+            hard_constrain_boundary=hc_flags["hard_constrain_boundary"],
+        )
+    elif problem_name == "burgers_1d":
+        return FDMSolverBurgers1D(
             problem=problem,
             domain=domain,
             pinn_model=pinn_model,
