@@ -1102,6 +1102,7 @@ class FDMSolverWave1D:
 
 
 class FDMSolverBurgers1D:
+
     def __init__(
         self,
         nx: int,
@@ -1251,3 +1252,204 @@ class FDMSolverBurgers1D:
     def run_time(self) -> float:
         """Returns the FDM solve/error approx. time in seconds."""
         return self._run_time
+
+
+class FDMSolverAllenCahn:
+
+    def __init__(
+        self,
+        nx: int,
+        nt: int,
+        problem: AllenCahn,
+        domain: ProblemDomain,
+        pinn_model: PINNTrainer,
+        hard_constrain_initial: bool = True,
+        hard_constrain_boundary: bool = True,
+        newton_tol: float = 1e-12,
+        newton_max_iter: int = 20,
+    ):
+        """Initialize the FDM solver for the 1D Allen-Cahn equation.
+
+        PDE: u_t = d * u_xx + k * (u - u^3)        (k = problem.reaction = 5)
+
+        Uses Crank-Nicolson time stepping (see Section 3.2)
+            u^{n+1} - 0.5*dt*N(u^{n+1}) = u^n + 0.5*dt*N(u^n),
+            N(u) = d * A_xx u + k (u - u^3)
+        The cubic term makes each step nonlinear; it is solved with Newton's
+        method (tridiagonal Jacobian, typically 3-5 iterations). Lagging the
+        nonlinearity like in the Burgers solver would make the scheme only
+        first order in time.
+
+        Error equation (e = u - û, R = û_t - d û_xx - k(û - û^3)):
+            e_t = d * e_xx + G(e; û) - R,
+            G(e; û) = k[(û + e) - (û + e)^3] - k[û - û^3]
+                    = k(1 - 3û^2) e - 3k û e^2 - k e^3
+        This is exact (not linearized in e), so the estimate stays consistent
+        with the true error also for bad (e.g. randomly initialized) PINNs.
+
+        Args:
+            nx (int): Number of spatial grid points.
+            nt (int): Number of temporal grid points.
+            problem (AllenCahn): The problem definition.
+            domain (ProblemDomain): The problem domain.
+            pinn_model (PINNTrainer): The trained PINN model.
+            hard_constrain_initial (bool, optional): Whether IC is hard-constrained
+                    in the PINN (i.e. constraint_mode="hard"). If False, the actual
+                    pointwise error at t=0 is computed instead of assuming it's zero.
+            hard_constrain_boundary (bool, optional): Whether BC is hard-constrained
+                    in the PINN. If False, the actual boundary error is computed at
+                    every time step instead of assuming it's zero. Defaults to True.
+            newton_tol (float, optional): Max-norm tolerance of the Newton update.
+            newton_max_iter (int, optional): Max Newton iterations per time step;
+                    stability_flag is set if it is reached without converging.
+        """
+        self.problem = problem
+        self.domain = domain
+        self.pinn_model = pinn_model
+        self.hard_constrain_initial = hard_constrain_initial
+        self.hard_constrain_boundary = hard_constrain_boundary
+        self.newton_tol = newton_tol
+        self.newton_max_iter = newton_max_iter
+        self.nx = nx
+        self.nt = nt
+        # Grid spacing
+        self.dx = (self.domain.spatial_bounds[1] - self.domain.spatial_bounds[0]) / (
+            nx - 1
+        )
+        self.dt = (self.domain.temporal_bounds[1] - self.domain.temporal_bounds[0]) / (
+            nt - 1
+        )
+        # Create grids
+        self.x = np.linspace(
+            self.domain.spatial_bounds[0], self.domain.spatial_bounds[1], nx
+        )
+        self.t = np.linspace(
+            self.domain.temporal_bounds[0], self.domain.temporal_bounds[1], nt
+        )
+        # caching once -- only the diagonal reaction part changes per iteration
+        self._A_xx = FDMMatrixBuilder.get_derivative_matrix_1d(nx, self.dx, order=2)
+        self._D = (self.problem.d * self._A_xx).tocsr()
+        self.stability_flag = False  # flag for stability issues
+        self._run_time = 0.0
+
+
+    def _build_matrices(self, reaction: np.ndarray):
+        """Newton matrix of the implicit CN half step:
+            M_lhs = I - 0.5*dt*(d*A_xx + diag(reaction)),  Dirichlet rows = identity
+        Args:
+            reaction: dG/dy at the current Newton iterate, k(1 - 3(û + y)^2)
+                      (û = 0 for solve())
+        """
+        L = self._D + sparse.diags(reaction)
+        I = sparse.eye(self.nx, format="csr")
+        M_lhs = (I - 0.5 * self.dt * L).tolil()
+        for i in (0, -1):                      # Dirichlet rows
+            M_lhs[i, :] = 0; M_lhs[i, i] = 1
+        self.M_lhs = M_lhs.tocsr()
+
+
+    def _G(self, y: np.ndarray, u_hat: np.ndarray) -> np.ndarray:
+        """G(y; û) = k[(û + y) - (û + y)^3] - k[û - û^3]
+        (û = 0 gives the plain reaction k(u - u^3) used in solve())."""
+        k = self.problem.reaction
+        w = u_hat + y
+        return k * (w - w**3) - k * (u_hat - u_hat**3)
+
+
+    def _cn_step(self, y_n, u_hat_n, u_hat_next, R_n, R_next, bc_next):
+        """One CN step for y_t = d y_xx + G(y; û) - R, solved with Newton.
+        Dirichlet values y[0], y[-1] = bc_next."""
+        half_dt = 0.5 * self.dt
+        explicit = (
+            y_n + half_dt * (self._D @ y_n + self._G(y_n, u_hat_n) - R_n)
+            - half_dt * R_next
+        )
+        y = y_n.copy()
+        y[[0, -1]] = bc_next
+        k = self.problem.reaction
+        for _ in range(self.newton_max_iter):
+            F = y - half_dt * (self._D @ y + self._G(y, u_hat_next)) - explicit
+            F[[0, -1]] = 0.0                    # boundary values already imposed
+            self._build_matrices(reaction=k * (1.0 - 3.0 * (u_hat_next + y) ** 2))
+            delta = spsolve(self.M_lhs, -F)
+            y += delta
+            if np.max(np.abs(delta)) < self.newton_tol:
+                break
+        else:
+            self.stability_flag = True
+        return y
+
+
+    def _pinn_u(self, t):
+        return self.pinn_model.predict(
+            np.column_stack([self.x, t * np.ones_like(self.x)])
+                ).flatten()
+
+
+    def solve(self):
+        start_time = time.time()
+        u = np.zeros((self.nt, self.nx))
+        u[0] = np.ravel(self.problem.initial_condition(self.x))
+        u_bd = np.ravel(self.problem.boundary_condition(self.x[[0, -1]]))  # = -1
+        zeros = np.zeros(self.nx)
+        for n in range(self.nt - 1):
+            u[n + 1] = self._cn_step(u[n], zeros, zeros, zeros, zeros, u_bd)
+        self._run_time = time.time() - start_time
+        return u
+
+
+    def _pinn_residual(self, t):
+        R = self.pinn_model.residual(
+            np.column_stack([self.x, t * np.ones_like(self.x)])
+        ).flatten()
+        R[0] = R[-1] = 0.0   # boundary rows are Dirichlet, source unused there
+        return R
+
+
+    def residual_integration(self):
+        start_time = time.time()
+        e = np.zeros((self.nt, self.nx))
+        if not self.hard_constrain_initial:
+            e[0] = np.ravel(self.problem.initial_condition(self.x)) - self._pinn_u(self.t[0])
+
+        R_curr = self._pinn_residual(self.t[0])      # with R[0]=R[-1]=0
+        u_hat_curr = self._pinn_u(self.t[0])
+
+        for n in range(self.nt - 1):
+            t_next = self.t[n + 1]
+            u_hat_next = self._pinn_u(t_next)
+            R_next = self._pinn_residual(t_next)
+
+            bc_next = (
+                np.zeros(2) if self.hard_constrain_boundary
+                else self._boundary_error(t_next)
+            )
+            e[n + 1] = self._cn_step(
+                e[n], u_hat_curr, u_hat_next, R_curr, R_next, bc_next
+            )
+            R_curr, u_hat_curr = R_next, u_hat_next
+
+        self._run_time = time.time() - start_time
+        return e
+
+
+    def _boundary_error(self, t: float) -> np.ndarray:
+        """Actual pointwise error at x_min/x_max at a given time. The boundary
+        data u = -1 is prescribed, so it is known exactly (no reference solve
+        needed) -- used when BC is soft."""
+        x_bd = np.array([self.x[0], self.x[-1]])
+        t_bd = t * np.ones_like(x_bd)
+        u_bd = np.ravel(self.problem.boundary_condition(x_bd))
+        u_pinn = self.pinn_model.predict(np.column_stack([x_bd, t_bd])).flatten()
+        return u_bd - u_pinn
+
+    @property
+    def run_time(self) -> float:
+        """Returns the FDM solve/error approx. time in seconds."""
+        return self._run_time
+        
+
+
+    
+        
+    

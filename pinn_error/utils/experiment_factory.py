@@ -7,7 +7,7 @@ from pinn_error.core.fdm import (FDMSolverDriftDiffusion, FDMSolverHeatEq,
 from pinn_error.core.pinn import PINNConfig, PINNTrainer
 from pinn_error.core.problem import BaseProblem, ProblemDomain
 from pinn_error.problems import (DriftDiffusion, Heat1DProblemSineIC,
-                                 Poisson1D, Poisson2D, Wave1D, Burgers1D)
+                                 Poisson1D, Poisson2D, Wave1D, Burgers1D, AllenCahn)
 
 # Define accepted kwargs for each problem type
 PROBLEM_KWARGS = {
@@ -17,6 +17,7 @@ PROBLEM_KWARGS = {
     "poisson_1d": ["x_min", "x_max"],
     "poisson_2d": ["x_min", "x_max", "y_min", "y_max"],
     "burgers_1d": ["x_min", "x_max", "t_max", "viscosity"],
+    "allen_cahn": ["x_min", "x_max", "t_max", "d" ],
 }
 
 
@@ -40,6 +41,8 @@ def get_problem(problem_name: str, **kwargs):
         return DriftDiffusion(**filtered_kwargs)
     elif problem_name == "burgers_1d":
         return Burgers1D(**filtered_kwargs)
+    elif problem_name == "allen_cahn":
+        return AllenCahn(**filtered_kwargs)
     else:
         raise ValueError(f"Unknown problem name: {problem_name}")
 
@@ -159,6 +162,10 @@ def get_fdm_solver(
             nt=nt,
             hard_constrain_initial=hc_flags["hard_constrain_initial"],
             hard_constrain_boundary=hc_flags["hard_constrain_boundary"],
+        )
+    elif problem_name == "allen_cahn"
+        return FDMSolverAllenCahn(
+            
         )
     else:
         raise ValueError(f"Unknown problem name: {problem_name}")

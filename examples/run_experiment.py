@@ -70,6 +70,7 @@ def main(args):
         "propagation_speed": args.propagation_speed,
         "frequency": args.frequency,
         "viscosity": args.viscosity,
+        "d": args.d,  # for allen cahn 
     }
  
     # Pass all FDM kwargs
@@ -156,7 +157,7 @@ def parse_args():
     parser.add_argument(
         "--problem",
         type=str,
-        choices=["heat", "wave", "drift_diffusion", "poisson_1d", "poisson_2d", "burgers_1d"],
+        choices=["heat", "wave", "drift_diffusion", "poisson_1d", "poisson_2d", "burgers_1d", "allenCahn_1d"],
         required=True,
         help="The problem to solve.",
     )
@@ -259,6 +260,12 @@ def parse_args():
         type=float,
         default=0.01,  # / np.pi, # for the benchmark convention we're dividing it by pi
         help="Viscosity for Burgers' equation.",
+    )
+    parser.add_argument(
+       "--d",
+       type=float,
+       default=0.001,
+       help="The positive parameter for Allen Cahn equation."
     )
  
     # Domain parameters
